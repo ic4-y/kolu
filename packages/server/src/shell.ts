@@ -216,6 +216,10 @@ export function osc7Init(opts: {
     writeFileSync(
       join(zdotdir, ".zshrc"),
       [
+        // ZDOTDIR override (below) suppresses zsh's auto-lookup of ~/.zshenv;
+        // replay it so the user's env (PATH etc.) loads even when the parent
+        // process has a stripped env — macOS launchd hands user agents one.
+        `[ -f "${home}/.zshenv" ] && source "${home}/.zshenv"`,
         `[ -f /etc/zprofile ] && source /etc/zprofile`,
         `[ -f "${home}/.zprofile" ] && source "${home}/.zprofile"`,
         `[ -f "${home}/.zshrc" ] && ZDOTDIR="${home}" source "${home}/.zshrc"`,
