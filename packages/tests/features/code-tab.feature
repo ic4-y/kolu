@@ -155,6 +155,35 @@ Feature: Code tab (review + browse)
       | branch |
       | browse |
 
+  # Regression: folder-chevron clicks did nothing while a filter was
+  # active because Pierre's `hide-non-matches` controller re-expands
+  # every match ancestor on each store event. Fix: filter on Kolu's side
+  # (`fileSearch.ts`) so Pierre never sees the query, and ask the
+  # wrapper to ensure match ancestors are expanded via `expandPaths`.
+  # The user can now collapse a folder freely, and the filter stays
+  # active until they explicitly change it.
+  Scenario Outline: Folder collapse during active filter persists the filter [<mode>]
+    Given a Code tab in "<mode>" mode showing files:
+      | path              | content |
+      | src/alpha-one.txt | a1      |
+      | src/alpha-two.txt | a2      |
+      | other.txt         | o       |
+    When I type "alpha" into the Code tab filter
+    Then the Code tab should show file "src/alpha-one.txt"
+    And the Code tab should show file "src/alpha-two.txt"
+    And the Code tab should not show file "other.txt"
+    When I click the directory node "src" in the Code tab
+    Then the Code tab should not show file "src/alpha-one.txt"
+    And the Code tab should not show file "src/alpha-two.txt"
+    And the Code tab filter input should contain "alpha"
+    And the Code tab should not show file "other.txt"
+
+    Examples:
+      | mode   |
+      | local  |
+      | branch |
+      | browse |
+
   Scenario Outline: Filter matches files by path tokens [<mode>]
     Given a Code tab in "<mode>" mode showing files:
       | path                          | content |

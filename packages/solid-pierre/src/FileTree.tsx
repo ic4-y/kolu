@@ -1,8 +1,8 @@
 /** SolidJS wrapper over `@pierre/trees`' vanilla `FileTree` class.
  *
  *  Pierre's `FileTree` owns its DOM (shadow-root rendered). Mount once,
- *  push updates via the class's setters (`resetPaths`, `setGitStatus`,
- *  `setSearch`) inside reactive effects, and call `cleanUp()` on disposal.
+ *  push updates via the class's setters (`resetPaths`, `setGitStatus`)
+ *  inside reactive effects, and call `cleanUp()` on disposal.
  *  Construction throws are routed to the `onError` prop so consumers can
  *  show a fallback panel instead of letting the exception escape Solid's
  *  `<ErrorBoundary>` (which only catches errors during *Solid* render). */
@@ -21,7 +21,6 @@ import {
   on,
   onCleanup,
   onMount,
-  untrack,
 } from "solid-js";
 import { toError } from "./toError";
 
@@ -35,13 +34,15 @@ export type FileTreeProps = {
   selectedPath?: string | null;
   onSelect?: (path: string | null) => void;
   /** Enable Pierre's built-in header search affordance. Default `true`.
-   *  Set to `false` when the host renders its own search input and drives
-   *  the tree externally via `searchQuery`. */
+   *  Set to `false` when the host renders its own search input and
+   *  drives the tree by projecting `paths` directly. */
   search?: boolean;
-  /** External search query — when provided, forwarded to Pierre's
-   *  `setSearch()`. Useful when search lives in the caller's chrome
-   *  rather than the tree header. Pass empty string or `null` to clear. */
-  searchQuery?: string | null;
+  /** Directories Pierre should open whenever the path projection
+   *  resets — forwarded as `initialExpandedPaths` to the constructor
+   *  and to each `resetPaths` call. Pierre opens these atomically with
+   *  the rebuild; expansion never falls out of sync with a path swap,
+   *  and the wrapper holds no separate per-path expansion state. */
+  expandPaths?: readonly string[];
   /** Initial folder expansion — captured at construction and **not
    *  reactive**. Pierre takes this once in its constructor; later prop
    *  changes are silently ignored. Re-mount the component (e.g. by
@@ -79,28 +80,12 @@ export const FileTree: Component<FileTreeProps> = (props) => {
   // membership in this set is a reliable file-vs-folder discriminator.
   const fileSet = createMemo(() => new Set(props.paths));
 
-  // Pierre rejects `""` for setSearch (empty string ≠ "no filter"); collapse
-  // empty/null/undefined to `null` so callers don't need to reproduce this.
-  const normalizeSearchQuery = (q: string | null | undefined) =>
-    q && q.length > 0 ? q : null;
-
-  // Single funnel for "tell Pierre to (re)set its filter". Three callers —
-  // initial mount, the deferred prop effect, and the row-click re-apply
-  // below — all need identical normalization and the same `onError` route,
-  // so they share one helper rather than three try/catch dances.
-  const applySearchQuery = (q: string | null | undefined) => {
-    try {
-      tree?.setSearch(normalizeSearchQuery(q));
-    } catch (e) {
-      props.onError(toError(e));
-    }
-  };
-
   onMount(() => {
     try {
       tree = new FileTreeClass({
         paths: props.paths,
         initialExpansion: props.initialExpansion ?? "closed",
+        initialExpandedPaths: props.expandPaths,
         flattenEmptyDirectories: props.flattenEmptyDirectories ?? true,
         stickyFolders: props.stickyFolders ?? true,
         icons: props.icons,
@@ -118,66 +103,22 @@ export const FileTree: Component<FileTreeProps> = (props) => {
         },
       });
       tree.render({ containerWrapper: container });
-
-      // Pierre's `handleRowClick` (in
-      // `node_modules/@pierre/trees/dist/render/FileTreeView.js`) clears its
-      // internal search via `controller.closeSearch()` after every row
-      // click — `closeSearch: isSearchOpen` is hardcoded in
-      // `fileTreeRowClickPlan.js` with no opt-out. When the host drives
-      // search externally via `searchQuery`, that prop is the source of
-      // truth, so we restore it after Pierre's click handler returns.
-      //
-      // We hook the DOM `click` event rather than Pierre's
-      // `onSelectionChange` callback because Pierre's selection-version
-      // gate (`FileTreeController.js` `#applySelection` short-circuits
-      // when the new selection equals the current one) suppresses the
-      // callback on re-clicks of the already-selected row — but
-      // `closeSearch()` still runs on every click, so an
-      // `onSelectionChange`-based hook would silently miss the re-click
-      // case while Pierre wipes the filter anyway.
-      //
-      // Detection uses the `data-item-path` attribute Pierre stamps on
-      // every row, found by walking `event.composedPath()` to pierce the
-      // shadow root. Invariants this depends on:
-      //   1. Pierre's row-click handler stays synchronous (so the
-      //      microtask runs *after* `closeSearch` has fired, not before).
-      //   2. Pierre keeps emitting `data-item-path` on row elements.
-      // Both are true today; both would silently break this re-apply if
-      // Pierre changes them, so they're worth the comment.
-      const reapplySearchAfterRowClick = (event: MouseEvent) => {
-        const clickedTreeRow = event
-          .composedPath()
-          .some(
-            (target) =>
-              target instanceof HTMLElement &&
-              target.dataset.itemPath !== undefined,
-          );
-        if (!clickedTreeRow) return;
-        queueMicrotask(() => {
-          const q = untrack(() => props.searchQuery);
-          if (normalizeSearchQuery(q) !== null) applySearchQuery(q);
-        });
-      };
-      container.addEventListener("click", reapplySearchAfterRowClick);
-      onCleanup(() =>
-        container.removeEventListener("click", reapplySearchAfterRowClick),
-      );
-
-      // Apply an initial searchQuery if it was already non-empty at mount —
-      // the deferred effect below only fires on subsequent changes, so a
-      // pre-mount value would otherwise be silently dropped.
-      applySearchQuery(untrack(() => props.searchQuery));
     } catch (e) {
       props.onError(toError(e));
     }
   });
 
+  // `resetPaths` takes the new path inventory and the directories to
+  // open in one call (Pierre's `FileTreeResetOptions.initialExpandedPaths`).
+  // Tracking both inputs in the same effect means a paths-and-ancestors
+  // swap lands atomically — no second effect, no ordering invariant
+  // between "rebuild tree" and "open ancestors".
   createEffect(
     on(
-      () => props.paths,
-      (paths) => {
+      [() => props.paths, () => props.expandPaths],
+      ([paths, expandPaths]) => {
         try {
-          tree?.resetPaths(paths);
+          tree?.resetPaths(paths, { initialExpandedPaths: expandPaths });
         } catch (e) {
           props.onError(toError(e));
         }
@@ -199,8 +140,6 @@ export const FileTree: Component<FileTreeProps> = (props) => {
       { defer: true },
     ),
   );
-
-  createEffect(on(() => props.searchQuery, applySearchQuery, { defer: true }));
 
   onCleanup(() => tree?.cleanUp());
 
