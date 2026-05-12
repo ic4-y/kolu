@@ -62,6 +62,8 @@ Read the log file (path is in the event's description) to diagnose.
 
 If a test fails once but passes on retry, post a comment on [issue #320](https://github.com/juspay/kolu/issues/320) capturing the failing scenario, platform, error excerpt, and the PR where it was observed. This keeps the flaky-test log current without manual curation.
 
+**IMPORTANT**: At least one platform must have e2e fully passed before the /do workflow is considered done.
+
 ## Reference
 
 `just ci` builds and tests across all systems. It:
