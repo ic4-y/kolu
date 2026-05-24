@@ -35,3 +35,23 @@ Feature: Mobile soft keyboard
     And I tap the mobile key "enter"
     Then the active terminal should show "soft-recall-marker" 3 times
     And there should be no page errors
+
+  @mobile
+  Scenario: Tapping the terminal focuses xterm without a contenteditable focus shuffle
+    # Regression guard for the iOS focus-shuffle bug (#448 / Terminal.tsx
+    # pointerdown fix): .xterm-screen must never receive a focus event during
+    # the tap — that's the smoking gun for the shuffle iOS uses to reject the
+    # soft keyboard.
+    When I tap the terminal canvas
+    Then the xterm contenteditable screen should never have been focused
+    And xterm's helper textarea should be the active element
+    And there should be no page errors
+
+  @mobile
+  Scenario: App root tracks visualViewport.height so the keyboard doesn't overlap the terminal
+    # iOS Safari overlays the soft keyboard on top of the layout viewport;
+    # `100dvh` doesn't shrink. useVisualViewportHeight sets `--app-h` on
+    # <html> so `var(--app-h, 100dvh)` on the App root tracks the visible
+    # area. Wire-check: --app-h must be populated after mount.
+    Then the --app-h CSS variable should match visualViewport.height
+    And there should be no page errors

@@ -1,6 +1,10 @@
+import * as assert from "node:assert";
 import { Then, When } from "@cucumber/cucumber";
 import { ACTIVE_TERMINAL } from "../support/buffer.ts";
 import { type KoluWorld, POLL_TIMEOUT } from "../support/world.ts";
+
+/** Browser-side window augmentation used by the focus-shuffle detection probe. */
+type FocusProbeWindow = Window & { __screenFocusCount?: number };
 
 const KEY_BAR = '[data-testid="mobile-key-bar"]';
 const KEY = (testId: string) => `[data-testid="mobile-key-${testId}"]`;
@@ -22,6 +26,86 @@ Then(
     await this.page
       .locator(KEY_BAR)
       .waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  },
+);
+
+When("I tap the terminal canvas", async function (this: KoluWorld) {
+  // Install a focus-event observer on .xterm-screen BEFORE the tap so we can
+  // detect the iOS-style contenteditable auto-focus. The bug surfaces when the
+  // browser focuses the contenteditable on pointerdown and our wrapper-click
+  // handler then shuffles to the helper textarea — the smoking gun is a focus
+  // event landing on .xterm-screen during the gesture.
+  await this.page.evaluate(() => {
+    const screen = document.querySelector(
+      "[data-visible][data-terminal-id] .xterm-screen",
+    ) as HTMLElement | null;
+    if (!screen) throw new Error("No .xterm-screen on active terminal");
+    const w = window as FocusProbeWindow;
+    w.__screenFocusCount = 0;
+    screen.addEventListener("focus", () => {
+      w.__screenFocusCount = (w.__screenFocusCount ?? 0) + 1;
+    });
+  });
+
+  // Real CDP touch via Playwright's touchscreen triggers the browser's native
+  // contenteditable auto-focus heuristic — synthetic dispatchEvent doesn't.
+  const canvas = this.page
+    .locator("[data-visible][data-terminal-id] .xterm-screen canvas")
+    .first();
+  const box = await canvas.boundingBox();
+  assert.ok(box, "xterm canvas has no bounding box");
+  await this.page.touchscreen.tap(
+    box.x + box.width / 2,
+    box.y + box.height / 2,
+  );
+  await this.waitForFrame();
+});
+
+Then(
+  "the xterm contenteditable screen should never have been focused",
+  async function (this: KoluWorld) {
+    const count = await this.page.evaluate(
+      () => (window as FocusProbeWindow).__screenFocusCount ?? 0,
+    );
+    assert.strictEqual(
+      count,
+      0,
+      `Expected .xterm-screen to never receive focus during the tap (focus-shuffle indicator), got ${count} focus events`,
+    );
+  },
+);
+
+Then(
+  "xterm's helper textarea should be the active element",
+  async function (this: KoluWorld) {
+    // Poll until focus settles — touchscreen tap focus assignment may not be
+    // synchronous by the time this step runs (mirrors the pattern used in
+    // terminal_lifecycle_steps.ts for "[data-focused]" after dialog dismissal).
+    await this.page.waitForFunction(
+      () =>
+        document.activeElement?.tagName === "TEXTAREA" &&
+        document.activeElement.classList.contains("xterm-helper-textarea"),
+      { timeout: POLL_TIMEOUT },
+    );
+  },
+);
+
+Then(
+  "the --app-h CSS variable should match visualViewport.height",
+  async function (this: KoluWorld) {
+    // Wire-check: useVisualViewportHeight is mounted and the inline-style
+    // override on the App root is consuming `--app-h`. Tolerate sub-pixel
+    // rounding from the px-string round-trip.
+    await this.page.waitForFunction(
+      () => {
+        const raw = document.documentElement.style.getPropertyValue("--app-h");
+        if (!raw) return false;
+        const cssH = Number.parseFloat(raw);
+        const vvH = window.visualViewport?.height ?? Number.NaN;
+        return Number.isFinite(cssH) && Math.abs(cssH - vvH) < 1;
+      },
+      { timeout: POLL_TIMEOUT },
+    );
   },
 );
 
