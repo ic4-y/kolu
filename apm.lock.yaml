@@ -1,6 +1,6 @@
 lockfile_version: '1'
-generated_at: '2026-06-01T01:35:22.383583+00:00'
-apm_version: 0.16.0
+generated_at: '2026-06-01T17:55:49.852287+00:00'
+apm_version: 0.16.1
 dependencies:
 - repo_url: anthropics/skills
   host: github.com
@@ -31,6 +31,14 @@ dependencies:
   - .agents/skills/nix-chrome-devtools-mcp
   - .claude/skills/nix-chrome-devtools-mcp
   content_hash: sha256:51308bd8cc8b6ae24781a77b67a7c8140bdea5d793e35427e7b8fcbeb0662074
+- repo_url: juspay/project-unknown
+  host: github.com
+  resolved_commit: 27c4973ae3837eaa54b0439faa5346a3320ac379
+  package_type: apm_package
+  deployed_files:
+  - .agents/skills/pu
+  - .claude/skills/pu
+  content_hash: sha256:3694a4feafcb2a8e33364e0eacd9ef5ab37f893733769570e2f18e4eb13ae3c8
 - repo_url: juspay/skills
   host: github.com
   resolved_commit: 6e2df2d9ab3a4031e89598b50aa1074c3fd87748
@@ -109,7 +117,6 @@ local_deployed_files:
 - .agents/skills/parcel
 - .agents/skills/perf-diagnose
 - .agents/skills/pierre
-- .agents/skills/pu
 - .agents/skills/test
 - .claude/commands/whatchanged.md
 - .claude/rules/apm-sources.md
@@ -127,7 +134,6 @@ local_deployed_files:
 - .claude/skills/parcel
 - .claude/skills/perf-diagnose
 - .claude/skills/pierre
-- .claude/skills/pu
 - .claude/skills/test
 - .opencode/commands/whatchanged.md
 local_deployed_file_hashes:
