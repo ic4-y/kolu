@@ -11,19 +11,15 @@
  *  schemas package stays type-only — schemas describe shapes, the
  *  UI layer composes display strings. */
 
-import {
-  type GitHubCheckStatus,
-  type GitHubPrInfo,
-  prLabel,
-} from "kolu-github/schemas";
+import { type CheckStatus, type PrInfo, prLabel } from "kolu-github/schemas";
 
-const CHECKS: Record<GitHubCheckStatus, { label: string; glyph: string }> = {
+const CHECKS: Record<CheckStatus, { label: string; glyph: string }> = {
   pass: { label: "all pass", glyph: "✓" },
   pending: { label: "pending", glyph: "…" },
   fail: { label: "fail", glyph: "✗" },
 };
 
-export function prTooltip(pr: GitHubPrInfo): string {
+export function prTooltip(pr: PrInfo): string {
   if (pr.checks === null) return prLabel(pr);
   // Older server payloads emit `checks` (the rollup) without
   // `checkRuns` (the per-check list); schema defaults the latter to

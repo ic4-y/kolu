@@ -1,48 +1,53 @@
-/** Zod schemas + pure helpers for GitHub PR metadata.
+/** Zod schemas + pure helpers for PR metadata.
  *
- *  Owns both the gh-specific shapes (`GitHubPrInfoSchema`, `Gh*`) and — for
- *  now — the provider-neutral `PrResult` / `PrUnavailableSource` scaffolding.
- *  The neutrals live here because `PrResult.ok.value` is `GitHubPrInfo`-
- *  shaped today and would invert the package dep direction if split out
- *  (`kolu-common` → `kolu-github`). When a second provider (`bkt`) lands —
- *  srid/agency#10 — promote the neutrals to their own leaf (or to
- *  `kolu-common`) and have each provider package import them. */
+ *  Owns both the gh-specific shapes (`CheckStatus`, `Gh*`) and — for
+ *  now — the provider-neutral `PrResult` / `PrInfo` / `PrUnavailableSource`
+ *  scaffolding. The neutrals live here because `PrResult.ok.value` was
+ *  `GitHubPrInfo`-shaped when first introduced and splitting the package dep
+ *  direction would have inverted (`kolu-common` → `kolu-github`). When a
+ *  second provider lands — srid/agency#10 — promote the neutrals to their
+ *  own leaf (or to `kolu-common`) and have each provider package import
+ *  them. */
 
 import { match } from "ts-pattern";
 import { z } from "zod";
 
 // --- GitHub PR info ---
 
-export const GitHubCheckStatusSchema = z.enum(["pending", "pass", "fail"]);
-export type GitHubCheckStatus = z.infer<typeof GitHubCheckStatusSchema>;
+export const CheckStatusSchema = z.enum(["pending", "pass", "fail"]);
+export type CheckStatus = z.infer<typeof CheckStatusSchema>;
 
-export const GitHubPrStateSchema = z.enum(["open", "closed", "merged"]);
-export type GitHubPrState = z.infer<typeof GitHubPrStateSchema>;
+export const PrStateSchema = z.enum(["open", "closed", "merged"]);
+export type PrState = z.infer<typeof PrStateSchema>;
 
 /** Per-check entry from GitHub's `statusCheckRollup`. The dock pip's
  *  tooltip lists these so a reviewer sees which specific gate is red
  *  without opening the PR. `name` is the CheckRun's name (e.g.
  *  `ci::biome@x86_64-linux`) or the StatusContext's `context`. */
-export const GitHubCheckSchema = z.object({
+export const CheckRunSchema = z.object({
   name: z.string(),
-  outcome: GitHubCheckStatusSchema,
+  outcome: CheckStatusSchema,
 });
-export type GitHubCheck = z.infer<typeof GitHubCheckSchema>;
+export type CheckRun = z.infer<typeof CheckRunSchema>;
 
-export const GitHubPrInfoSchema = z.object({
+/** Forge-neutral PR info shape. Despite living in `kolu-github`, these
+ *  fields are common across GitHub, Forgejo, GitLab, and other forges.
+ *  Each adapter maps its forge-specific API response to this shape.
+ *  Future: extract to a neutral package when the dep direction bites. */
+export const PrInfoSchema = z.object({
   number: z.number(),
   title: z.string(),
   url: z.string(),
   /** PR state: open, closed, or merged. */
-  state: GitHubPrStateSchema,
+  state: PrStateSchema,
   /** Combined CI status: pending, pass, or fail. Null if no checks configured. */
-  checks: GitHubCheckStatusSchema.nullable(),
+  checks: CheckStatusSchema.nullable(),
   /** Per-check breakdown — same data `checks` rolls up. Empty when no
    *  checks are configured. `.default([])` so an older server emitting
    *  payloads without this field still parses on a newer client. */
-  checkRuns: z.array(GitHubCheckSchema).default([]),
+  checkRuns: z.array(CheckRunSchema).default([]),
 });
-export type GitHubPrInfo = z.infer<typeof GitHubPrInfoSchema>;
+export type PrInfo = z.infer<typeof PrInfoSchema>;
 
 // --- gh-specific unavailable code ---
 
@@ -87,24 +92,52 @@ export const GhUnavailableSchema = z.object({
   code: GhUnavailableCodeSchema,
 });
 
+// --- Forgejo-specific unavailable code ---
+
+export const ForgejoUnavailableCodeSchema = z.enum([
+  "not-configured",
+  "timed-out",
+  "not-found",
+  "unknown",
+]);
+export type ForgejoUnavailableCode = z.infer<
+  typeof ForgejoUnavailableCodeSchema
+>;
+
+const FORGEJO_REASONS: Record<ForgejoUnavailableCode, string> = {
+  "not-configured": "forgejo: no token configured",
+  "timed-out": "forgejo: timed out",
+  "not-found": "forgejo: repository not found",
+  unknown: "forgejo: unknown error",
+};
+
+export function reasonForForgejoCode(code: ForgejoUnavailableCode): string {
+  return FORGEJO_REASONS[code];
+}
+
+export const ForgejoUnavailableSchema = z.object({
+  provider: z.literal("forgejo"),
+  code: ForgejoUnavailableCodeSchema,
+});
+
 /** Which provider classified the failure, plus that provider's typed code.
  *
- *  Today only `gh`; a sibling `BktUnavailableSchema` joins this union when
- *  bkt support lands (srid/agency#10). UI dispatch sites that render
- *  recovery instructions should `match(source.provider).exhaustive()` so
- *  adding a new provider arm forces every render site to handle it. */
+ *  UI dispatch sites that render recovery instructions should
+ *  `match(source.provider).exhaustive()` so adding a new provider arm
+ *  forces every render site to handle it. */
 export const PrUnavailableSourceSchema = z.discriminatedUnion("provider", [
   GhUnavailableSchema,
+  ForgejoUnavailableSchema,
 ]);
 export type PrUnavailableSource = z.infer<typeof PrUnavailableSourceSchema>;
 
 /** Display string for any unavailable source — dispatches on provider to the
  *  provider's own reason lookup. `.exhaustive()` forces a compile error when
- *  bkt adds its arm to `PrUnavailableSourceSchema` until a matching `.with`
- *  lands here. */
+ *  a new provider arm lands until a matching `.with` is added here. */
 export function reasonForSource(source: PrUnavailableSource): string {
   return match(source)
     .with({ provider: "gh" }, ({ code }) => reasonForGhCode(code))
+    .with({ provider: "forgejo" }, ({ code }) => reasonForForgejoCode(code))
     .exhaustive();
 }
 
@@ -112,7 +145,7 @@ export function reasonForSource(source: PrUnavailableSource): string {
 
 /** PR resolution state.
  *
- *  Decomplects distinct conditions that `GitHubPrInfo | null` used to
+ *  Decomplects distinct conditions that `PrInfo | null` used to
  *  collapse into one value:
  *    pending     — resolver is running (or stale after a branch change)
  *    ok          — resolver succeeded; a PR exists for this branch
@@ -131,7 +164,7 @@ export function reasonForSource(source: PrUnavailableSource): string {
  *  status registry (see PR description for juspay/kolu#148). */
 export const PrResultSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("pending") }),
-  z.object({ kind: z.literal("ok"), value: GitHubPrInfoSchema }),
+  z.object({ kind: z.literal("ok"), value: PrInfoSchema }),
   z.object({ kind: z.literal("absent") }),
   z.object({
     kind: z.literal("unavailable"),
@@ -140,16 +173,16 @@ export const PrResultSchema = z.discriminatedUnion("kind", [
 ]);
 export type PrResult = z.infer<typeof PrResultSchema>;
 
-/** Extract the `GitHubPrInfo` when `kind === "ok"`, else `null`.
+/** Extract the `PrInfo` when `kind === "ok"`, else `null`.
  *  Lets SolidJS `<Show when={prValue(meta.pr)}>` work without tripping on the
  *  object-truthy trap (every variant is a non-null object). */
-export function prValue(pr: PrResult): GitHubPrInfo | null {
+export function prValue(pr: PrResult): PrInfo | null {
   return pr.kind === "ok" ? pr.value : null;
 }
 
 /** Single source of truth for the `#123 Title` PR label used in
  *  notification text, tooltips, and any other plain-string surface. */
-export function prLabel(pr: GitHubPrInfo): string {
+export function prLabel(pr: PrInfo): string {
   return `#${pr.number} ${pr.title}`;
 }
 

@@ -6,6 +6,7 @@
  *  comes from `useAnchoredPopover`. */
 
 import type {
+  ForgejoUnavailableCode,
   GhUnavailableCode,
   PrUnavailableSource,
 } from "kolu-github/schemas";
@@ -27,6 +28,9 @@ export const ProviderUnavailableContent: Component<{
   match(props.source)
     .with({ provider: "gh" }, ({ code }) => (
       <GhUnavailableContent code={code} />
+    ))
+    .with({ provider: "forgejo" }, ({ code }) => (
+      <ForgejoUnavailableContent code={code} />
     ))
     .exhaustive();
 
@@ -107,6 +111,49 @@ const GhUnavailableContent: Component<{ code: GhUnavailableCode }> = (
     ))
     .exhaustive();
 };
+
+const ForgejoUnavailableContent: Component<{
+  code: ForgejoUnavailableCode;
+}> = (props) =>
+  match(props.code)
+    .with("not-configured", () => (
+      <>
+        <div class="font-medium text-fg">Forgejo token not configured</div>
+        <p class="text-fg-2 leading-relaxed">
+          Set <code class="font-mono">KOLU_FORGEJO_TOKEN</code> in the kolu
+          server environment for private repository access. Public repos on
+          Codeberg work without a token.
+        </p>
+      </>
+    ))
+    .with("timed-out", () => (
+      <>
+        <div class="font-medium text-fg">Forgejo API timed out</div>
+        <p class="text-fg-2 leading-relaxed">
+          The Forgejo API took longer than 5s to respond. Kolu will retry on the
+          next branch change or polling tick.
+        </p>
+      </>
+    ))
+    .with("not-found", () => (
+      <>
+        <div class="font-medium text-fg">Forgejo repository not found</div>
+        <p class="text-fg-2 leading-relaxed">
+          The repository was not found on the Forgejo instance. Check that the
+          remote URL is correct and the token (if set) has access.
+        </p>
+      </>
+    ))
+    .with("unknown", () => (
+      <>
+        <div class="font-medium text-fg">Forgejo lookup failed</div>
+        <p class="text-fg-2 leading-relaxed">
+          An unrecognized error from the Forgejo API. Check kolu server logs for
+          details; kolu will retry on the next branch change.
+        </p>
+      </>
+    ))
+    .exhaustive();
 
 const PrUnavailablePopover: Component<{
   open: boolean;

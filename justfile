@@ -75,7 +75,7 @@ lint: install
 # Run server with auto-reload. Honors KOLU_DEV_SERVER_PORT if set (e.g. by
 # `just dev`), otherwise the server CLI falls back to its default port.
 server:
-    cd packages/server && {{ nix_shell }} pnpm dev ${KOLU_DEV_SERVER_PORT:+--port $KOLU_DEV_SERVER_PORT}
+    cd packages/server && {{ nix_shell }} pnpm dev ${KOLU_DEV_SERVER_PORT:+--port $KOLU_DEV_SERVER_PORT} $([ "$LOG_LEVEL" = debug ] && echo "--verbose")
 
 # Run client with Vite dev server (HMR)
 client:

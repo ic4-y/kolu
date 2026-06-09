@@ -4,8 +4,8 @@
 
 import { match, P } from "ts-pattern";
 import type {
-  GitHubCheck,
-  GitHubPrInfo,
+  CheckRun,
+  PrInfo,
   PrResult,
   PrUnavailableSource,
 } from "./schemas.ts";
@@ -64,7 +64,7 @@ function classifyCheck(check: RollupEntry): CheckOutcome {
 
 export function deriveCheckStatus(
   rollup: RollupEntry[] | undefined,
-): GitHubPrInfo["checks"] {
+): PrInfo["checks"] {
   if (!rollup || rollup.length === 0) return null;
   // "fail" is terminal — short-circuit; "pending" is sticky until something fails.
   let worst: CheckOutcome = "pass";
@@ -83,9 +83,7 @@ export function deriveCheckStatus(
  *  Name preference: `CheckRun.name` for Actions/Apps; `StatusContext.context`
  *  for REST commit statuses; `?` as a last-resort fallback so the array
  *  shape stays uniform even if gh returns an entry missing both. */
-export function extractChecks(
-  rollup: RollupEntry[] | undefined,
-): GitHubCheck[] {
+export function extractChecks(rollup: RollupEntry[] | undefined): CheckRun[] {
   if (!rollup) return [];
   return rollup.map((c) => ({
     name:
@@ -130,6 +128,11 @@ export function classifyGhError(err: unknown): PrResult {
     return ghUnavailable("timed-out");
   }
   const stderr = (e.stderr ?? "").toLowerCase();
+  // Non-GitHub forges: gh refuses before any API call. Classify as absent
+  // (silent) — the user simply isn't on GitHub, not unauthenticated.
+  if (stderr.includes("none of the git remotes")) {
+    return { kind: "absent" };
+  }
   if (
     stderr.includes("not logged in") ||
     stderr.includes("authentication") ||
@@ -148,10 +151,9 @@ export function classifyGhError(err: unknown): PrResult {
   return ghUnavailable("unknown");
 }
 
-/** Compare two PR resolution states for equality. Reads gh-shaped fields
- *  on `ok.value` — lives with the gh schemas rather than alongside
- *  provider-neutral `PrResult` scaffolding. Generalize when a second
- *  provider forces `ok.value` to widen. */
+/** Compare two PR resolution states for equality. Reads forge-neutral
+ *  fields on `ok.value` — lives with the gh schemas rather than alongside
+ *  provider-neutral `PrResult` scaffolding. */
 export function prResultEqual(a: PrResult, b: PrResult): boolean {
   if (a === b) return true;
   if (a.kind !== b.kind) return false;
@@ -182,7 +184,7 @@ export function prResultEqual(a: PrResult, b: PrResult): boolean {
  *  because `extractChecks` preserves the order gh returns — re-fetches
  *  with no real change produce the same sequence, so a `===`-style
  *  identity check survives ordinary polling without false positives. */
-function checkRunsEqual(a: GitHubCheck[], b: GitHubCheck[]): boolean {
+function checkRunsEqual(a: CheckRun[], b: CheckRun[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
   return a.every(

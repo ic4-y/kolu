@@ -32,6 +32,7 @@
     "kolu-codex": "workspace:*",
     "kolu-common": "workspace:*",
     "kolu-git": "workspace:*",
+    "kolu-forgejo": "workspace:*",
     "kolu-github": "workspace:*",
     "kolu-opencode": "workspace:*",
     "kolu-pty": "workspace:*",
