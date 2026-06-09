@@ -57,6 +57,7 @@ import {
   pierreTreesShadowCss,
   pierreTreesStyle,
 } from "../ui/pierreTheme";
+import { realSizes } from "../ui/corvuResizable";
 import { Z_HANDLE_INNER } from "../ui/stackLayers";
 import { app } from "../wire";
 import BrowseDiffView from "./BrowseDiffView";
@@ -736,7 +737,8 @@ const CodeTab: Component<{
             1 - rightPanel.codeTabTreeSize(),
           ]}
           onSizesChange={(sizes) => {
-            if (sizes[0] !== undefined) rightPanel.setCodeTabTreeSize(sizes[0]);
+            const s = realSizes(sizes);
+            if (s) rightPanel.setCodeTabTreeSize(s[0]);
           }}
           class="flex-1 min-h-0 overflow-hidden"
         >
