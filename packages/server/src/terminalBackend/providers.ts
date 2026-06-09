@@ -49,7 +49,13 @@ import { claudeCodeProvider } from "kolu-claude-code";
 import { codexProvider } from "kolu-codex";
 import { subscribeGitInfo } from "kolu-git";
 import type { GitInfo } from "kolu-git/schemas";
-import { detectForge, githubPrProvider, type PrProvider, type PrWatcher } from "kolu-github";
+import {
+  detectForge,
+  detectForgeAsync,
+  githubPrProvider,
+  type PrProvider,
+  type PrWatcher,
+} from "kolu-github";
 import { forgejoPrProvider } from "kolu-forgejo";
 import type {
   AgentInfo,
@@ -302,8 +308,8 @@ function startPrProvider(
   }
 
   const cleanup = channels.git.consume({
-    onEvent: (git) => {
-      const forge = detectForge(git?.remoteUrl ?? null);
+    onEvent: async (git) => {
+      const forge = await detectForgeAsync(git?.remoteUrl ?? null);
       if (!git) {
         watcher?.setGit(null, null);
         return;

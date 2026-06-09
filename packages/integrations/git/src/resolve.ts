@@ -34,7 +34,10 @@ async function resolveRemoteUrl(
   try {
     return (await git.raw(["remote", "get-url", "origin"])).trim() || null;
   } catch (err) {
-    log?.debug({ err }, "git: remote get-url failed (no origin remote or git error)");
+    log?.debug(
+      { err },
+      "git: remote get-url failed (no origin remote or git error)",
+    );
     return null;
   }
 }

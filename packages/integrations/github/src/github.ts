@@ -83,9 +83,7 @@ export function deriveCheckStatus(
  *  Name preference: `CheckRun.name` for Actions/Apps; `StatusContext.context`
  *  for REST commit statuses; `?` as a last-resort fallback so the array
  *  shape stays uniform even if gh returns an entry missing both. */
-export function extractChecks(
-  rollup: RollupEntry[] | undefined,
-): CheckRun[] {
+export function extractChecks(rollup: RollupEntry[] | undefined): CheckRun[] {
   if (!rollup) return [];
   return rollup.map((c) => ({
     name:

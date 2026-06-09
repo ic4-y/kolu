@@ -11,11 +11,7 @@
  *  schemas package stays type-only — schemas describe shapes, the
  *  UI layer composes display strings. */
 
-import {
-  type CheckStatus,
-  type PrInfo,
-  prLabel,
-} from "kolu-github/schemas";
+import { type CheckStatus, type PrInfo, prLabel } from "kolu-github/schemas";
 
 const CHECKS: Record<CheckStatus, { label: string; glyph: string }> = {
   pass: { label: "all pass", glyph: "✓" },

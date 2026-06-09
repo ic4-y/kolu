@@ -10,7 +10,9 @@ export { githubPrProvider } from "./github-provider.ts";
 export {
   type ForgeType,
   detectForge,
+  detectForgeAsync,
   parseRemoteHost,
+  probeForgeType,
 } from "./forge.ts";
 export { type PrProvider } from "./pr-provider.ts";
 export {

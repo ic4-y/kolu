@@ -1,12 +1,10 @@
 /** Forge detection from a git remote URL.
  *
- *  Parses the host from SSH or HTTPS remote URLs and maps it to a
- *  `ForgeType`. The host lists are extensible via environment variables
- *  so self-hosters can register their instances without code changes.
- *
- *  This is intentionally simple — a host-string lookup, not a protocol
- *  probe. If the remote isn't recognized, dispatch returns "unknown"
- *  and the PR provider stays silent. */
+ *  Parses the host from SSH or HTTPS remote URLs. Known hosts (github.com,
+ *  codeberg.org) return immediately. Unknown hosts are probed via the
+ *  Forgejo/Gitea version endpoint — if it responds with a version, they're
+ *  treated as Forgejo/Gitea. Results are cached per host for the lifetime
+ *  of the process. Self-hosted instances need no manual configuration. */
 
 const GITHUB_HOSTS = new Set(["github.com"]);
 const FORGEJO_HOSTS = new Set(["codeberg.org"]);
@@ -69,9 +67,43 @@ export function parseRemoteHost(remoteUrl: string): string | null {
   }
 }
 
-/** Detect the forge type from a remote URL. Returns "unknown" when the
- *  host isn't recognized — callers should treat this as "no PR provider"
- *  and stay silent rather than logging warnings. */
+/** Cache of async probe results: host → ForgeType. Populated lazily by
+ *  `detectForge` when a host is unrecognized. Avoids re-probing the same
+ *  host on every git event. */
+const probeCache = new Map<string, ForgeType>();
+
+/** Probe an unknown host to see if it serves a Forgejo/Gitea API.
+ *  Cached per host — only fires once per process lifetime. */
+export async function probeForgeType(host: string): Promise<ForgeType> {
+  const cached = probeCache.get(host);
+  if (cached) return cached;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3_000);
+  try {
+    const res = await fetch(`https://${host}/api/v1/version`, {
+      signal: controller.signal,
+    });
+    if (res.ok) {
+      const body = await res.json() as { version?: string };
+      if (body.version) {
+        getForgejoHosts().add(host);
+        probeCache.set(host, "forgejo");
+        return "forgejo";
+      }
+    }
+  } catch {
+    // Probe failed — not a Forgejo/Gitea instance
+  } finally {
+    clearTimeout(timer);
+  }
+  probeCache.set(host, "unknown");
+  return "unknown";
+}
+
+/** Detect the forge type from a remote URL. Known hosts return immediately;
+ *  unknown hosts are probed asynchronously via `probeForgeType`. On first
+ *  encounter, returns "unknown" while the probe is in flight, then the
+ *  caller should re-check after the probe settles. */
 export function detectForge(remoteUrl: string | null): ForgeType {
   if (!remoteUrl) return "unknown";
   const host = parseRemoteHost(remoteUrl);
@@ -79,4 +111,19 @@ export function detectForge(remoteUrl: string | null): ForgeType {
   if (getGitHubHosts().has(host)) return "github";
   if (getForgejoHosts().has(host)) return "forgejo";
   return "unknown";
+}
+
+/** Detect forge synchronously (known hosts only) AND fire a probe for
+ *  unrecognized hosts. Returns a promise that resolves to the final forge
+ *  type after any needed probe completes. Use this when you need the
+ *  definitive answer before wiring up a watcher. */
+export async function detectForgeAsync(
+  remoteUrl: string | null,
+): Promise<ForgeType> {
+  const initial = detectForge(remoteUrl);
+  if (initial !== "unknown") return initial;
+  if (!remoteUrl) return "unknown";
+  const host = parseRemoteHost(remoteUrl);
+  if (!host) return "unknown";
+  return probeForgeType(host);
 }

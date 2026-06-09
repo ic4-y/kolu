@@ -174,7 +174,10 @@ export async function resolveForgejoPr(
         outcome: mapCheckStatus(s.status),
       }));
     } catch (err) {
-      log?.warn({ err }, "forgejo: status fetch failed (CI checks unavailable)");
+      log?.warn(
+        { err },
+        "forgejo: status fetch failed (CI checks unavailable)",
+      );
     }
 
     return {
