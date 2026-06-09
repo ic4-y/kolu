@@ -1,6 +1,6 @@
 /** Zod schemas + pure helpers for PR metadata.
  *
- *  Owns both the gh-specific shapes (`GitHubCheckStatus`, `Gh*`) and — for
+ *  Owns both the gh-specific shapes (`CheckStatus`, `Gh*`) and — for
  *  now — the provider-neutral `PrResult` / `PrInfo` / `PrUnavailableSource`
  *  scaffolding. The neutrals live here because `PrResult.ok.value` was
  *  `GitHubPrInfo`-shaped when first introduced and splitting the package dep
@@ -14,21 +14,21 @@ import { z } from "zod";
 
 // --- GitHub PR info ---
 
-export const GitHubCheckStatusSchema = z.enum(["pending", "pass", "fail"]);
-export type GitHubCheckStatus = z.infer<typeof GitHubCheckStatusSchema>;
+export const CheckStatusSchema = z.enum(["pending", "pass", "fail"]);
+export type CheckStatus = z.infer<typeof CheckStatusSchema>;
 
-export const GitHubPrStateSchema = z.enum(["open", "closed", "merged"]);
-export type GitHubPrState = z.infer<typeof GitHubPrStateSchema>;
+export const PrStateSchema = z.enum(["open", "closed", "merged"]);
+export type PrState = z.infer<typeof PrStateSchema>;
 
 /** Per-check entry from GitHub's `statusCheckRollup`. The dock pip's
  *  tooltip lists these so a reviewer sees which specific gate is red
  *  without opening the PR. `name` is the CheckRun's name (e.g.
  *  `ci::biome@x86_64-linux`) or the StatusContext's `context`. */
-export const GitHubCheckSchema = z.object({
+export const CheckRunSchema = z.object({
   name: z.string(),
-  outcome: GitHubCheckStatusSchema,
+  outcome: CheckStatusSchema,
 });
-export type GitHubCheck = z.infer<typeof GitHubCheckSchema>;
+export type CheckRun = z.infer<typeof CheckRunSchema>;
 
 /** Forge-neutral PR info shape. Despite living in `kolu-github`, these
  *  fields are common across GitHub, Forgejo, GitLab, and other forges.
@@ -39,13 +39,13 @@ export const PrInfoSchema = z.object({
   title: z.string(),
   url: z.string(),
   /** PR state: open, closed, or merged. */
-  state: GitHubPrStateSchema,
+  state: PrStateSchema,
   /** Combined CI status: pending, pass, or fail. Null if no checks configured. */
-  checks: GitHubCheckStatusSchema.nullable(),
+  checks: CheckStatusSchema.nullable(),
   /** Per-check breakdown — same data `checks` rolls up. Empty when no
    *  checks are configured. `.default([])` so an older server emitting
    *  payloads without this field still parses on a newer client. */
-  checkRuns: z.array(GitHubCheckSchema).default([]),
+  checkRuns: z.array(CheckRunSchema).default([]),
 });
 export type PrInfo = z.infer<typeof PrInfoSchema>;
 

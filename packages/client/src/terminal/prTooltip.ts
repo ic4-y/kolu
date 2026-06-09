@@ -12,12 +12,12 @@
  *  UI layer composes display strings. */
 
 import {
-  type GitHubCheckStatus,
+  type CheckStatus,
   type PrInfo,
   prLabel,
 } from "kolu-github/schemas";
 
-const CHECKS: Record<GitHubCheckStatus, { label: string; glyph: string }> = {
+const CHECKS: Record<CheckStatus, { label: string; glyph: string }> = {
   pass: { label: "all pass", glyph: "✓" },
   pending: { label: "pending", glyph: "…" },
   fail: { label: "fail", glyph: "✗" },

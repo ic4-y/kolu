@@ -13,7 +13,7 @@ import {
   extractChecks,
   prResultEqual,
 } from "./github.ts";
-import { GitHubPrStateSchema, type PrResult } from "./schemas.ts";
+import { PrStateSchema, type PrResult } from "./schemas.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -79,7 +79,7 @@ export async function resolveGitHubPr(
         number: data.number,
         title: data.title,
         url: data.url,
-        state: GitHubPrStateSchema.parse(data.state.toLowerCase()),
+        state: PrStateSchema.parse(data.state.toLowerCase()),
         checks: deriveCheckStatus(data.statusCheckRollup),
         checkRuns: extractChecks(data.statusCheckRollup),
       },

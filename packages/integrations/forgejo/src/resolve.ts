@@ -14,8 +14,8 @@ import {
   parseRemoteHost,
   subscribePrResolver,
   type ForgejoUnavailableCode,
-  type GitHubCheck,
-  type GitHubCheckStatus,
+  type CheckRun,
+  type CheckStatus,
   type PrInfo,
   type PrResult,
   type PrWatcher,
@@ -81,7 +81,7 @@ function mapPrState(state: string, merged: boolean): PrInfo["state"] {
   return "open";
 }
 
-function mapCheckStatus(status: string): GitHubCheckStatus {
+function mapCheckStatus(status: string): CheckStatus {
   switch (status) {
     case "success":
       return "pass";
@@ -96,7 +96,7 @@ function mapCheckStatus(status: string): GitHubCheckStatus {
   }
 }
 
-function mapCombinedState(state: string): GitHubCheckStatus | null {
+function mapCombinedState(state: string): CheckStatus | null {
   switch (state) {
     case "success":
       return "pass";
@@ -161,8 +161,8 @@ export async function resolveForgejoPr(
       return { kind: "absent" };
     }
 
-    let checks: GitHubCheckStatus | null = null;
-    let checkRuns: GitHubCheck[] = [];
+    let checks: CheckStatus | null = null;
+    let checkRuns: CheckRun[] = [];
     try {
       const status = await forgejoFetch<ForgejoCombinedStatus>(
         `${baseUrl}/api/v1/repos/${owner}/${repo}/commits/${match.head.sha}/status`,
