@@ -63,7 +63,7 @@ describe("subscribeGitHubPr", () => {
       expect(calls).toBeGreaterThan(0); // the throwing consumer ran
       expect(log.error).toHaveBeenCalledWith(
         expect.objectContaining({ err: expect.anything() }),
-        "github pr watcher: emit failed",
+        "pr watcher: emit failed",
       );
       expect(unhandled).not.toHaveBeenCalled(); // nothing escaped
     } finally {
@@ -101,7 +101,7 @@ describe("subscribeGitHubPr", () => {
 
       expect(log.error).toHaveBeenCalledWith(
         expect.objectContaining({ err: expect.anything() }),
-        "github pr watcher: emit failed",
+        "pr watcher: emit failed",
       );
       expect(unhandled).not.toHaveBeenCalled();
     } finally {
