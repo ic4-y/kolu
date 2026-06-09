@@ -49,8 +49,8 @@ import { claudeCodeProvider } from "kolu-claude-code";
 import { codexProvider } from "kolu-codex";
 import { subscribeGitInfo } from "kolu-git";
 import type { GitInfo } from "kolu-git/schemas";
-import { detectForge, subscribeGitHubPr, type PrWatcher } from "kolu-github";
-import { subscribeForgejoPr } from "kolu-forgejo";
+import { detectForge, githubPrProvider, type PrProvider, type PrWatcher } from "kolu-github";
+import { forgejoPrProvider } from "kolu-forgejo";
 import type {
   AgentInfo,
   LiveTerminalFields,
@@ -248,6 +248,11 @@ function startGitProvider(
 
 // ── Forge-aware PR watcher ───────────────────────────────────────────
 
+const PR_PROVIDERS: Map<string, PrProvider> = new Map([
+  [githubPrProvider.kind, githubPrProvider],
+  [forgejoPrProvider.kind, forgejoPrProvider],
+]);
+
 function startPrProvider(
   record: ProviderRecord,
   terminalId: TerminalId,
@@ -264,15 +269,18 @@ function startPrProvider(
     if (key === lastKey && watcher) return;
     watcher?.stop();
     lastKey = key;
-    if (forge === "github") {
-      watcher = subscribeGitHubPr(emit, plog);
-    } else if (forge === "forgejo" && git?.remoteUrl) {
-      watcher = subscribeForgejoPr(git.remoteUrl, emit, plog);
-    } else {
+    const provider = PR_PROVIDERS.get(forge);
+    if (!provider) {
       watcher = null;
       return;
     }
-    if (git) watcher.setGit(git.repoRoot, git.branch);
+    watcher = provider.subscribe(
+      git?.repoRoot ?? "",
+      git?.branch ?? "",
+      git?.remoteUrl ?? null,
+      emit,
+      plog,
+    );
   }
 
   function emit(pr: import("kolu-github").PrResult): void {

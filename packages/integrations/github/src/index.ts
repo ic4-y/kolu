@@ -6,11 +6,13 @@
  *  neutral-vs-gh-specific layout rationale. */
 
 export { classifyGhError, deriveCheckStatus, prResultEqual } from "./github.ts";
+export { githubPrProvider } from "./github-provider.ts";
 export {
   type ForgeType,
   detectForge,
   parseRemoteHost,
 } from "./forge.ts";
+export { type PrProvider } from "./pr-provider.ts";
 export {
   type GitHubPrWatcher,
   type PrWatcher,
