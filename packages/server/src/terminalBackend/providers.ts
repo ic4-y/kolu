@@ -271,6 +271,7 @@ function startPrProvider(
     lastKey = key;
     const provider = PR_PROVIDERS.get(forge);
     if (!provider) {
+      emit({ kind: "absent" });
       watcher = null;
       return;
     }

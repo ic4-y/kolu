@@ -12,13 +12,11 @@
 import type { Logger } from "kolu-shared";
 import {
   parseRemoteHost,
-  subscribePrResolver,
   type ForgejoUnavailableCode,
   type CheckRun,
   type CheckStatus,
   type PrInfo,
   type PrResult,
-  type PrWatcher,
 } from "kolu-github";
 
 const FORGEJO_TIMEOUT_MS = 5_000;
@@ -56,7 +54,9 @@ export function parseForgejoRemote(
       return { host, owner: parts[0], repo };
     }
   } catch {
-    // fall through
+    // `new URL()` throws for non-URL remotes (SSH, bare paths) that the
+    // SSH regex above didn't match. Falls through to return null — the
+    // caller treats unparseable URLs as "absent."
   }
   return null;
 }
@@ -174,7 +174,7 @@ export async function resolveForgejoPr(
         outcome: mapCheckStatus(s.status),
       }));
     } catch (err) {
-      log?.debug({ err }, "forgejo: status fetch failed (non-fatal)");
+      log?.warn({ err }, "forgejo: status fetch failed (CI checks unavailable)");
     }
 
     return {
@@ -205,23 +205,4 @@ export async function resolveForgejoPr(
     log?.error({ err: msg }, "forgejo: API error");
     return forgejoUnavailable("unknown");
   }
-}
-
-/** Subscribe to Forgejo PR changes for a terminal.
- *
- *  Binds the `remoteUrl` into the resolver so the generic watcher's
- *  `setGit(repoRoot, branch)` signature stays forge-neutral. The
- *  `remoteUrl` is captured at subscription time — if the user changes
- *  the remote, the caller should stop and re-subscribe. */
-export function subscribeForgejoPr(
-  remoteUrl: string,
-  onChange: (pr: PrResult) => void,
-  log?: Logger,
-): PrWatcher {
-  return subscribePrResolver(
-    (repoRoot, branch, rlog) =>
-      resolveForgejoPr(repoRoot, branch, remoteUrl, rlog),
-    onChange,
-    log,
-  );
 }

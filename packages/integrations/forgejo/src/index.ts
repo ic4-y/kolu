@@ -7,7 +7,6 @@
 export {
   parseForgejoRemote,
   resolveForgejoPr,
-  subscribeForgejoPr,
 } from "./resolve.ts";
 export { forgejoPrProvider } from "./provider.ts";
 export type { ForgejoUnavailableCode } from "kolu-github";

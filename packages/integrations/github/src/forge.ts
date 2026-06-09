@@ -62,6 +62,9 @@ export function parseRemoteHost(remoteUrl: string): string | null {
     const url = new URL(trimmed);
     return url.hostname.toLowerCase();
   } catch {
+    // `new URL()` throws when the remote isn't a valid URL — expected
+    // for non-URL remotes (file://, bare paths) that the SSH regex above
+    // didn't match. Null signals "unparseable" to the caller.
     return null;
   }
 }

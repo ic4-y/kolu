@@ -29,10 +29,12 @@ export function hasGitDir(cwd: string): boolean {
  *  null as "unknown forge" and stays silent. */
 async function resolveRemoteUrl(
   git: ReturnType<typeof simpleGit>,
+  log?: Logger,
 ): Promise<string | null> {
   try {
     return (await git.raw(["remote", "get-url", "origin"])).trim() || null;
-  } catch {
+  } catch (err) {
+    log?.debug({ err }, "git: remote get-url failed (no origin remote or git error)");
     return null;
   }
 }
@@ -85,7 +87,7 @@ export async function resolveGitInfo(
         branch,
         isWorktree: false,
         mainRepoRoot: repoRoot,
-        remoteUrl: await resolveRemoteUrl(git),
+        remoteUrl: await resolveRemoteUrl(git, log),
       });
     }
     const repoRoot = (await git.revparse(["--show-toplevel"])).trim();
