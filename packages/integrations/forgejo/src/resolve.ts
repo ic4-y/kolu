@@ -194,6 +194,10 @@ export async function resolveForgejoPr(
       return forgejoUnavailable("timed-out");
     }
     const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("401") || msg.includes("403")) {
+      log?.warn({ remoteUrl }, "forgejo: authentication failed");
+      return forgejoUnavailable("not-configured");
+    }
     if (msg.includes("404")) {
       log?.debug({ remoteUrl }, "forgejo: repository not found");
       return forgejoUnavailable("not-found");
