@@ -309,7 +309,10 @@ function startPrProvider(
 
   const cleanup = channels.git.consume({
     onEvent: async (git) => {
-      const forge = await detectForgeAsync(git?.remoteUrl ?? null);
+      const remoteUrl = git?.remoteUrl ?? null;
+      plog.debug({ remoteUrl, repo: git?.repoName }, "git channel received");
+      const forge = await detectForgeAsync(remoteUrl);
+      plog.debug({ forge }, "forge detected");
       if (!git) {
         watcher?.setGit(null, null);
         return;

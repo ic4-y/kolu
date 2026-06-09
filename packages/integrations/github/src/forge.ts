@@ -52,19 +52,16 @@ export type ForgeType = "github" | "forgejo" | "unknown";
 export function parseRemoteHost(remoteUrl: string): string | null {
   const trimmed = remoteUrl.trim();
   if (!trimmed) return null;
-  // SSH form: git@host:owner/repo or ssh://git@host/owner/repo
-  const sshMatch = trimmed.match(/^(?:ssh:\/\/)?(?:[^@]+@)?([^:/]+)[:/]/);
-  if (sshMatch?.[1]) return sshMatch[1].toLowerCase();
-  // HTTPS form: https://host/owner/repo
+  // Try URL parser first — handles both https:// and ssh:// URLs.
   try {
     const url = new URL(trimmed);
     return url.hostname.toLowerCase();
   } catch {
-    // `new URL()` throws when the remote isn't a valid URL — expected
-    // for non-URL remotes (file://, bare paths) that the SSH regex above
-    // didn't match. Null signals "unparseable" to the caller.
-    return null;
+    // Not a valid URL — try SSH shorthand: git@host:owner/repo
   }
+  const sshMatch = trimmed.match(/^[^@]+@([^:]+):/);
+  if (sshMatch?.[1]) return sshMatch[1].toLowerCase();
+  return null;
 }
 
 /** Cache of async probe results: host → ForgeType. Populated lazily by
@@ -84,7 +81,7 @@ export async function probeForgeType(host: string): Promise<ForgeType> {
       signal: controller.signal,
     });
     if (res.ok) {
-      const body = await res.json() as { version?: string };
+      const body = (await res.json()) as { version?: string };
       if (body.version) {
         getForgejoHosts().add(host);
         probeCache.set(host, "forgejo");
