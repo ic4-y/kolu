@@ -257,12 +257,13 @@ function startPrProvider(
   const plog = log.child({ provider: "pr", terminal: terminalId });
   plog.debug("started");
   let watcher: PrWatcher | null = null;
-  let lastForge: string | null = null;
+  let lastKey: string | null = null;
 
   function ensureWatcher(forge: string, git: GitInfo | null): void {
-    if (forge === lastForge && watcher) return;
+    const key = `${forge}:${git?.remoteUrl ?? ""}`;
+    if (key === lastKey && watcher) return;
     watcher?.stop();
-    lastForge = forge;
+    lastKey = key;
     if (forge === "github") {
       watcher = subscribeGitHubPr(emit, plog);
     } else if (forge === "forgejo" && git?.remoteUrl) {
