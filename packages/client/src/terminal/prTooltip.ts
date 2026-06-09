@@ -13,7 +13,7 @@
 
 import {
   type GitHubCheckStatus,
-  type GitHubPrInfo,
+  type PrInfo,
   prLabel,
 } from "kolu-github/schemas";
 
@@ -23,7 +23,7 @@ const CHECKS: Record<GitHubCheckStatus, { label: string; glyph: string }> = {
   fail: { label: "fail", glyph: "✗" },
 };
 
-export function prTooltip(pr: GitHubPrInfo): string {
+export function prTooltip(pr: PrInfo): string {
   if (pr.checks === null) return prLabel(pr);
   // Older server payloads emit `checks` (the rollup) without
   // `checkRuns` (the per-check list); schema defaults the latter to

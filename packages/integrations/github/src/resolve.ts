@@ -54,11 +54,16 @@ interface GhPrViewResult {
  *  `gh pr list --head <name>` which matches by branch name alone and picks
  *  up unrelated fork PRs.
  *
+ *  The `branch` parameter is accepted for signature compatibility with
+ *  `subscribePrResolver` but unused — `gh pr view` resolves from the
+ *  repo's working tree state, not a passed branch name.
+ *
  *  Logs failures at the appropriate level when a logger is passed:
  *  absent→debug (expected), unknown→error (actual bug), other→warn
  *  (degraded-but-recoverable). */
 export async function resolveGitHubPr(
   repoRoot: string,
+  _branch?: string,
   log?: Logger,
 ): Promise<PrResult> {
   try {
@@ -110,8 +115,8 @@ function logGhResolveFailure(
   );
 }
 
-/** Watcher handle returned by `subscribeGitHubPr`. */
-export interface GitHubPrWatcher {
+/** Watcher handle returned by `subscribePrResolver`. */
+export interface PrWatcher {
   /** Feed the latest git state. Repo+branch dedup happens internally; a
    *  real change triggers a synchronous `{ kind: "pending" }` emit followed
    *  by an async resolve that emits the result. Pass `null`s when the
@@ -121,23 +126,24 @@ export interface GitHubPrWatcher {
   stop: () => void;
 }
 
-/** Subscribe to GitHub PR changes for a terminal.
- *
- *  Mirrors `kolu-git`'s `subscribeGitInfo` shape: the caller wires the
- *  watcher to its own git source (channel subscription, signal, whatever)
- *  via `setGit`, and receives resolved `PrResult` values through `onChange`.
+/** Forge-neutral PR resolution watcher.
  *
  *  Owns: branch-change dedup (via `prResultEqual`), pending emission on
- *  branch change (so stale PR info doesn't linger while `gh pr view` is in
+ *  branch change (so stale PR info doesn't linger while resolve is in
  *  flight), and a 30s polling loop that re-resolves on the last-seen
  *  repo/branch (PRs can be created/updated externally).
  *
- *  Does not own: the git source, metadata publishing, terminal lifecycle —
- *  those stay with the caller. */
-export function subscribeGitHubPr(
+ *  Does not own: the git source, the resolver implementation, metadata
+ *  publishing, terminal lifecycle — those stay with the caller. */
+export function subscribePrResolver(
+  resolvePr: (
+    repoRoot: string,
+    branch: string,
+    log?: Logger,
+  ) => Promise<PrResult>,
   onChange: (pr: PrResult) => void,
   log?: Logger,
-): GitHubPrWatcher {
+): PrWatcher {
   let lastBranch: string | null = null;
   let lastRepoRoot: string | null = null;
   let lastPr: PrResult = { kind: "pending" };
@@ -146,20 +152,15 @@ export function subscribeGitHubPr(
   function emit(pr: PrResult): void {
     if (stopped || prResultEqual(pr, lastPr)) return;
     lastPr = pr;
-    // `onChange` is the caller's callback (a metadata write that can throw).
-    // Guard it here — the single funnel every emission path passes through —
-    // so a throwing consumer degrades this terminal's PR metadata instead of
-    // escaping: synchronously out of `setGit` into the git channel's consume
-    // loop, or as an unhandled rejection out of the floated `fetchAndEmit`.
     try {
       onChange(pr);
     } catch (err) {
-      log?.error({ err }, "github pr watcher: emit failed");
+      log?.error({ err }, "pr watcher: emit failed");
     }
   }
 
-  async function fetchAndEmit(repoRoot: string): Promise<void> {
-    const pr = await resolveGitHubPr(repoRoot, log);
+  async function fetchAndEmit(repoRoot: string, branch: string): Promise<void> {
+    const pr = await resolvePr(repoRoot, branch, log);
     emit(pr);
   }
 
@@ -171,17 +172,14 @@ export function subscribeGitHubPr(
     );
     lastBranch = branch;
     lastRepoRoot = repoRoot;
-    // Emit pending so stale PR info doesn't linger while resolve is in
-    // flight. If we already last-emitted pending, dedup inside `emit`
-    // makes this a no-op.
     emit({ kind: "pending" });
-    if (branch && repoRoot) void fetchAndEmit(repoRoot);
+    if (branch && repoRoot) void fetchAndEmit(repoRoot, branch);
   }
 
   const pollTimer = setInterval(() => {
     if (lastBranch && lastRepoRoot) {
       log?.debug({ branch: lastBranch }, "poll tick");
-      void fetchAndEmit(lastRepoRoot);
+      void fetchAndEmit(lastRepoRoot, lastBranch);
     }
   }, POLL_INTERVAL_MS);
 
@@ -193,4 +191,25 @@ export function subscribeGitHubPr(
       log?.debug({ branch: lastBranch }, "stopped");
     },
   };
+}
+
+/** @deprecated Use `subscribePrResolver(resolveGitHubPr, ...)` directly.
+ *  Kept for backward compatibility. */
+export type GitHubPrWatcher = PrWatcher;
+
+/** Subscribe to GitHub PR changes for a terminal.
+ *
+ *  Thin wrapper around `subscribePrResolver` that binds the GitHub
+ *  resolver. Mirrors `kolu-git`'s `subscribeGitInfo` shape: the caller
+ *  wires the watcher to its own git source via `setGit`, and receives
+ *  resolved `PrResult` values through `onChange`. */
+export function subscribeGitHubPr(
+  onChange: (pr: PrResult) => void,
+  log?: Logger,
+): PrWatcher {
+  return subscribePrResolver(
+    (repoRoot, _branch, rlog) => resolveGitHubPr(repoRoot, _branch, rlog),
+    onChange,
+    log,
+  );
 }

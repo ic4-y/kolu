@@ -12,6 +12,7 @@ export const GitInfoSchema = z.object({
   branch: z.string(),
   isWorktree: z.boolean(),
   mainRepoRoot: z.string(),
+  remoteUrl: z.string().nullable(),
 });
 
 // --- Git worktree operations ---

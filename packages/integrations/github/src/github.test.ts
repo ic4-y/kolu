@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyGhError, deriveCheckStatus, prResultEqual } from "./github.ts";
-import type { GitHubPrInfo, PrResult } from "./schemas.ts";
+import type { PrInfo, PrResult } from "./schemas.ts";
 
 describe("deriveCheckStatus", () => {
   it("returns null for undefined rollup", () => {
@@ -78,7 +78,7 @@ describe("deriveCheckStatus", () => {
 });
 
 describe("prResultEqual", () => {
-  const pr: GitHubPrInfo = {
+  const pr: PrInfo = {
     number: 1,
     title: "test",
     url: "https://github.com/test/test/pull/1",
@@ -180,6 +180,16 @@ describe("classifyGhError", () => {
       classifyGhError({
         code: 1,
         stderr: "no git remotes found\n",
+      }),
+    ).toEqual({ kind: "absent" });
+  });
+
+  it("classifies non-GitHub forge stderr as absent (not not-authenticated)", () => {
+    expect(
+      classifyGhError({
+        code: 1,
+        stderr:
+          "none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`",
       }),
     ).toEqual({ kind: "absent" });
   });

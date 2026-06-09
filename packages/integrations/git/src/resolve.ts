@@ -24,6 +24,19 @@ export function hasGitDir(cwd: string): boolean {
   }
 }
 
+/** Best-effort remote URL resolution. Returns null when the repo has no
+ *  `origin` remote or the command fails — forge detection downstream treats
+ *  null as "unknown forge" and stays silent. */
+async function resolveRemoteUrl(
+  git: ReturnType<typeof simpleGit>,
+): Promise<string | null> {
+  try {
+    return (await git.raw(["remote", "get-url", "origin"])).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve git context for a directory. Returns an error result if not in a
  *  git repo or if the git command fails. */
 export async function resolveGitInfo(
@@ -72,6 +85,7 @@ export async function resolveGitInfo(
         branch,
         isWorktree: false,
         mainRepoRoot: repoRoot,
+        remoteUrl: await resolveRemoteUrl(git),
       });
     }
     const repoRoot = (await git.revparse(["--show-toplevel"])).trim();
@@ -98,6 +112,7 @@ export async function resolveGitInfo(
       branch,
       isWorktree,
       mainRepoRoot,
+      remoteUrl: await resolveRemoteUrl(git),
     });
   } catch (e) {
     // Log so unexpected failures (permission errors, missing git binary)
@@ -120,7 +135,8 @@ export function gitInfoEqual(a: GitInfo | null, b: GitInfo | null): boolean {
   return (
     a.repoRoot === b.repoRoot &&
     a.branch === b.branch &&
-    a.worktreePath === b.worktreePath
+    a.worktreePath === b.worktreePath &&
+    a.remoteUrl === b.remoteUrl
   );
 }
 

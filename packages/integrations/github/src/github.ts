@@ -5,7 +5,7 @@
 import { match, P } from "ts-pattern";
 import type {
   GitHubCheck,
-  GitHubPrInfo,
+  PrInfo,
   PrResult,
   PrUnavailableSource,
 } from "./schemas.ts";
@@ -64,7 +64,7 @@ function classifyCheck(check: RollupEntry): CheckOutcome {
 
 export function deriveCheckStatus(
   rollup: RollupEntry[] | undefined,
-): GitHubPrInfo["checks"] {
+): PrInfo["checks"] {
   if (!rollup || rollup.length === 0) return null;
   // "fail" is terminal — short-circuit; "pending" is sticky until something fails.
   let worst: CheckOutcome = "pass";
@@ -130,6 +130,11 @@ export function classifyGhError(err: unknown): PrResult {
     return ghUnavailable("timed-out");
   }
   const stderr = (e.stderr ?? "").toLowerCase();
+  // Non-GitHub forges: gh refuses before any API call. Classify as absent
+  // (silent) — the user simply isn't on GitHub, not unauthenticated.
+  if (stderr.includes("none of the git remotes")) {
+    return { kind: "absent" };
+  }
   if (
     stderr.includes("not logged in") ||
     stderr.includes("authentication") ||
@@ -148,10 +153,9 @@ export function classifyGhError(err: unknown): PrResult {
   return ghUnavailable("unknown");
 }
 
-/** Compare two PR resolution states for equality. Reads gh-shaped fields
- *  on `ok.value` — lives with the gh schemas rather than alongside
- *  provider-neutral `PrResult` scaffolding. Generalize when a second
- *  provider forces `ok.value` to widen. */
+/** Compare two PR resolution states for equality. Reads forge-neutral
+ *  fields on `ok.value` — lives with the gh schemas rather than alongside
+ *  provider-neutral `PrResult` scaffolding. */
 export function prResultEqual(a: PrResult, b: PrResult): boolean {
   if (a === b) return true;
   if (a.kind !== b.kind) return false;

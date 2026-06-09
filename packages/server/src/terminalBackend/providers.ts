@@ -7,8 +7,8 @@
  *
  *  Provider DAG:
  *
- *    cwd:<id>          ─►  git watcher           ─►  github PR watcher
- *                                                    (lives on m.pr)
+ *    cwd:<id>          ─►  git watcher           ─►  forge-aware PR watcher
+ *                                                   (lives on m.pr)
  *    title:<id>        ─►  process observer      (lives on m.foreground)
  *    title/cwd/cmd     ─►  agent detector ×3     (lives on m.agent)
  *    commandRun:<id>   ─►  agent-command tracker (lives on m.lastAgentCommand)
@@ -18,7 +18,7 @@
  *  activity-feed notifications (`trackRecentRepo` / `trackRecentAgent`)
  *  are optional so non-parent hosts can opt out.
  *
- *  Note on `git` channel: the GitHub PR provider chains off the
+ *  Note on `git` channel: the PR provider chains off the
  *  `git` channel that the git provider publishes — so the channel
  *  has to be provided by the host (the agent creates a per-terminal
  *  in-memory channel for it).
@@ -49,7 +49,8 @@ import { claudeCodeProvider } from "kolu-claude-code";
 import { codexProvider } from "kolu-codex";
 import { subscribeGitInfo } from "kolu-git";
 import type { GitInfo } from "kolu-git/schemas";
-import { subscribeGitHubPr } from "kolu-github";
+import { detectForge, subscribeGitHubPr, type PrWatcher } from "kolu-github";
+import { subscribeForgejoPr } from "kolu-forgejo";
 import type {
   AgentInfo,
   LiveTerminalFields,
@@ -245,17 +246,35 @@ function startGitProvider(
   };
 }
 
-// ── GitHub PR watcher ─────────────────────────────────────────────────
+// ── Forge-aware PR watcher ───────────────────────────────────────────
 
-function startGitHubPrProvider(
+function startPrProvider(
   record: ProviderRecord,
   terminalId: TerminalId,
   channels: ProviderChannels,
   hooks: ProviderHooks,
 ): () => void {
-  const plog = log.child({ provider: "github-pr", terminal: terminalId });
+  const plog = log.child({ provider: "pr", terminal: terminalId });
   plog.debug("started");
-  const watcher = subscribeGitHubPr((pr) => {
+  let watcher: PrWatcher | null = null;
+  let lastForge: string | null = null;
+
+  function ensureWatcher(forge: string, git: GitInfo | null): void {
+    if (forge === lastForge && watcher) return;
+    watcher?.stop();
+    lastForge = forge;
+    if (forge === "github") {
+      watcher = subscribeGitHubPr(emit, plog);
+    } else if (forge === "forgejo" && git?.remoteUrl) {
+      watcher = subscribeForgejoPr(git.remoteUrl, emit, plog);
+    } else {
+      watcher = null;
+      return;
+    }
+    if (git) watcher.setGit(git.repoRoot, git.branch);
+  }
+
+  function emit(pr: import("kolu-github").PrResult): void {
     hooks.updateServerLiveMetadata(record, (m) => {
       m.pr = pr;
     });
@@ -270,15 +289,23 @@ function startGitHubPrProvider(
         : { pr: pr.kind },
       "pr info updated",
     );
-  }, plog);
+  }
+
   const cleanup = channels.git.consume({
-    onEvent: (git) =>
-      watcher.setGit(git?.repoRoot ?? null, git?.branch ?? null),
+    onEvent: (git) => {
+      const forge = detectForge(git?.remoteUrl ?? null);
+      if (!git) {
+        watcher?.setGit(null, null);
+        return;
+      }
+      ensureWatcher(forge, git);
+      watcher?.setGit(git.repoRoot, git.branch);
+    },
     onError: (err) => plog.error({ err }, "publisher subscription failed"),
   });
   return () => {
     cleanup();
-    watcher.stop();
+    watcher?.stop();
     plog.debug("stopped");
   };
 }
@@ -729,12 +756,7 @@ export function startProviders(
     hooks,
   );
   const stopGit = startGitProvider(record, terminalId, channels, hooks);
-  const stopGitHubPr = startGitHubPrProvider(
-    record,
-    terminalId,
-    channels,
-    hooks,
-  );
+  const stopPr = startPrProvider(record, terminalId, channels, hooks);
   const stopClaude = startAgentProvider(
     claudeCodeProvider,
     record,
@@ -760,7 +782,7 @@ export function startProviders(
   return () => {
     stopAgentCommand();
     stopGit();
-    stopGitHubPr();
+    stopPr();
     stopClaude();
     stopCodex();
     stopOpenCode();
