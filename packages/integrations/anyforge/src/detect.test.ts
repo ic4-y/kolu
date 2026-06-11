@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectForge, parseRemoteHost } from "./detect.ts";
+import { isForgejoHost, parseRemoteHost, parseRemoteUrl } from "./detect.ts";
 
 describe("parseRemoteHost", () => {
   it("parses HTTPS remote", () => {
@@ -43,26 +43,37 @@ describe("parseRemoteHost", () => {
   });
 });
 
-describe("detectForge", () => {
-  it("returns github for null remote", () => {
-    expect(detectForge(null)).toBe("github");
+describe("parseRemoteUrl", () => {
+  it("parses HTTPS remote into host/owner/repo", () => {
+    expect(parseRemoteUrl("https://codeberg.org/forgejo/forgejo.git")).toEqual({
+      host: "codeberg.org",
+      owner: "forgejo",
+      repo: "forgejo",
+    });
   });
-  it("returns github for github.com remote", () => {
-    expect(detectForge("https://github.com/juspay/kolu.git")).toBe("github");
+  it("parses SCP-style SSH remote", () => {
+    expect(parseRemoteUrl("git@codeberg.org:forgejo/forgejo.git")).toEqual({
+      host: "codeberg.org",
+      owner: "forgejo",
+      repo: "forgejo",
+    });
   });
-  it("returns forgejo for codeberg.org remote", () => {
-    expect(detectForge("https://codeberg.org/forgejo/forgejo")).toBe("forgejo");
+  it("returns null for local path", () => {
+    expect(parseRemoteUrl("/srv/git/repo.git")).toBeNull();
   });
-  it("returns forgejo for codeberg.org SCP-style remote", () => {
-    expect(detectForge("git@codeberg.org:forgejo/forgejo.git")).toBe("forgejo");
+  it("returns null when only one path component", () => {
+    expect(parseRemoteUrl("https://codeberg.org/forgejo")).toBeNull();
   });
-  it("returns forgejo for userless SCP-style codeberg remote", () => {
-    expect(detectForge("codeberg.org:owner/repo.git")).toBe("forgejo");
+});
+
+describe("isForgejoHost", () => {
+  it("returns true for codeberg.org", () => {
+    expect(isForgejoHost("codeberg.org")).toBe(true);
   });
-  it("returns github for unknown host", () => {
-    expect(detectForge("https://gitlab.com/owner/repo.git")).toBe("github");
+  it("returns false for github.com", () => {
+    expect(isForgejoHost("github.com")).toBe(false);
   });
-  it("returns github for unparseable remote", () => {
-    expect(detectForge("/srv/git/repo.git")).toBe("github");
+  it("returns false for unknown host", () => {
+    expect(isForgejoHost("gitlab.example.com")).toBe(false);
   });
 });

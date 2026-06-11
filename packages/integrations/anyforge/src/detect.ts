@@ -1,9 +1,11 @@
 /** Sync/pure forge detection from a remote URL.
  *
- *  The kernel names no forge by default — `PrProvider.kind` is a bare
- *  `string`. This module is the server-side dispatch helper: given a
- *  remote URL (as resolved from `git remote get-url origin`), classify
- *  it into a `ForgeKind` so the server can pick the right adapter.
+ *  The kernel names no forge. `parseRemoteHost` extracts the host from
+ *  a git remote URL (HTTPS or SCP-style SSH). `isForgejoHost` classifies
+ *  whether a host is a Forgejo/Gitea instance. The *closed* `ForgeKind`
+ *  union and the `detectForge` function that returns it live at the
+ *  dispatch site (server/providers.ts) — the leaf only exposes the
+ *  primitives.
  *
  *  Detection is sync and pure — no network probe. Probing unknown hosts
  *  is a privacy decision (egress to arbitrary hosts parsed from git
@@ -13,8 +15,6 @@
  *
  *  Known Forgejo hosts: `codeberg.org` (built-in) plus
  *  `KOLU_FORGEJO_HOSTS` (comma-separated, for self-hosted instances). */
-
-export type ForgeKind = "github" | "forgejo";
 
 const FORGEJO_HOSTS_BUILTIN = new Set(["codeberg.org"]);
 
@@ -59,12 +59,35 @@ export function parseRemoteHost(remoteUrl: string): string | null {
   return null;
 }
 
-/** Classify a remote URL's forge. Sync, pure (modulo the env-var read
- *  for `KOLU_FORGEJO_HOSTS`, which is cached after first access). */
-export function detectForge(remoteUrl: string | null): ForgeKind {
-  if (!remoteUrl) return "github";
+/** Parse owner/repo from a remote URL. Returns null when the remote isn't
+ *  a recognized forge URL (local path, unknown host, etc). Built on
+ *  `parseRemoteHost` so the URL grammar lives in one place. */
+export function parseRemoteUrl(
+  remoteUrl: string,
+): { host: string; owner: string; repo: string } | null {
   const host = parseRemoteHost(remoteUrl);
-  if (!host) return "github";
-  if (forgejoHosts().has(host)) return "forgejo";
-  return "github";
+  if (!host) return null;
+  const trimmed = remoteUrl.trim();
+  let pathname: string;
+  try {
+    const parsed = new URL(trimmed);
+    pathname = parsed.pathname;
+  } catch {
+    const m = /^(?:[^@/]+@)?[^@:/]+:(.*)$/.exec(trimmed);
+    if (!m) return null;
+    pathname = m[1]!;
+  }
+  const parts = pathname
+    .replace(/\.git$/, "")
+    .split("/")
+    .filter((p) => p.length > 0);
+  if (parts.length < 2) return null;
+  return { host, owner: parts[0]!, repo: parts[1]! };
+}
+
+/** Whether `host` is configured as a Forgejo/Gitea instance. The closed
+ *  `ForgeKind` enum and the `detectForge(remoteUrl)` helper that uses
+ *  this predicate live at the dispatch site, not in the leaf. */
+export function isForgejoHost(host: string): boolean {
+  return forgejoHosts().has(host);
 }

@@ -5,48 +5,21 @@
  *  loop lives in anyforge's `subscribePr`; this module is just the Forgejo
  *  adapter it dispatches to. */
 
-import { parseRemoteHost } from "anyforge";
+import { logPrResolveFailure, parseRemoteUrl } from "anyforge";
 import type { PrGitContext, PrProvider, PrResult } from "anyforge";
 import { PrStateSchema } from "anyforge/schemas";
 import type { Logger } from "kolu-shared";
 import { z } from "zod";
 import {
   classifyForgejoError,
-  deriveForgejoCheckStatus,
   extractForgejoChecks,
   type ForgejoCommitStatus,
-  type ForgejoPullRequest,
   mapForgejoPrState,
 } from "./forgejo.ts";
 import type { ForgejoUnavailableSource } from "./schemas.ts";
-import { authHeader, readForgejoToken } from "./token.ts";
+import { readForgejoToken } from "./token.ts";
 
 const FETCH_TIMEOUT_MS = 5_000;
-
-/** Parse owner/repo from a remote URL. Returns null when the remote isn't
- *  a recognized forge URL (local path, unknown host, etc). */
-function parseOwnerRepo(
-  remoteUrl: string,
-): { owner: string; repo: string; host: string } | null {
-  const host = parseRemoteHost(remoteUrl);
-  if (!host) return null;
-  const trimmed = remoteUrl.trim();
-  let pathname: string;
-  try {
-    const parsed = new URL(trimmed);
-    pathname = parsed.pathname;
-  } catch {
-    const m = /^(?:[^@/]+@)?[^@:/]+:(.*)$/.exec(trimmed);
-    if (!m) return null;
-    pathname = m[1]!;
-  }
-  const parts = pathname
-    .replace(/\.git$/, "")
-    .split("/")
-    .filter((p) => p.length > 0);
-  if (parts.length < 2) return null;
-  return { owner: parts[0]!, repo: parts[1]!, host };
-}
 
 /** Shape returned by `GET /repos/{owner}/{repo}/pulls`. */
 const ForgejoPrListSchema = z.array(
@@ -101,17 +74,18 @@ class ForgejoFetchError extends Error {
   }
 }
 
+type Credential = { token: string; type: "Application" | "OAuth" };
+
 async function forgejoFetch(
   url: string,
-  token: string | null,
-  authType: "Application" | "OAuth" | null,
+  cred: Credential | null,
 ): Promise<unknown> {
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
-  if (token && authType) {
+  if (cred) {
     headers["Authorization"] =
-      authType === "OAuth" ? `Bearer ${token}` : `token ${token}`;
+      cred.type === "OAuth" ? `Bearer ${cred.token}` : `token ${cred.token}`;
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -127,118 +101,37 @@ async function forgejoFetch(
       );
     }
     return await res.json();
-  } catch (e) {
-    if (e instanceof ForgejoFetchError) throw e;
-    if (e instanceof DOMException && e.name === "AbortError") {
-      const err = new Error("Fetch aborted") as Error & {
-        code: string;
-      };
-      err.code = "AbortError";
-      throw err;
-    }
-    throw e;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-/** Look up the Forgejo PR for the current branch.
- *
- *  Uses `GET /repos/{owner}/{repo}/pulls` filtered by head branch, then
- *  matches head repo full_name to avoid fork false-positives (a fork
- *  branch with the same name as a base branch would otherwise match).
- *  Queries both open and closed states so merged/closed PRs resolve too.
- *
- *  CI status comes from `GET /repos/{owner}/{repo}/commits/{sha}/status`
- *  on the PR's head SHA — a flat list of commit statuses, unlike GitHub's
- *  GraphQL rollup. */
-export async function resolveForgejoPr(
-  git: PrGitContext & { remoteUrl?: string | null },
-  log?: Logger,
+/** Resolve a Forgejo PR for the current branch. Pure orchestration: parse
+ *  remote, fetch PR list, match head repo+ref (fork-safe), fetch commit
+ *  status, assemble PrResult. */
+async function resolveForgejoPrImpl(
+  git: PrGitContext,
+  cred: Credential | null,
+  log: Logger | undefined,
 ): Promise<PrResult<ForgejoUnavailableSource>> {
-  const remoteUrl = git.remoteUrl;
-  if (!remoteUrl) {
-    return { kind: "absent" };
-  }
-  const parsed = parseOwnerRepo(remoteUrl);
+  const parsed = parseRemoteUrl(git.remoteUrl ?? "");
   if (!parsed) {
     return { kind: "absent" };
   }
   const { owner, repo, host } = parsed;
-  const cred = readForgejoToken(host, log);
   const baseUrl = `https://${host}/api/v1`;
 
-  try {
-    const prData = await forgejoFetch(
-      `${baseUrl}/repos/${owner}/${repo}/pulls?state=open&limit=50`,
-      cred?.token ?? null,
-      cred?.type ?? null,
-    );
-    const prs = ForgejoPrListSchema.parse(prData);
-    const fullName = `${owner}/${repo}`;
-    const pr = prs.find((p) => {
-      const headRef = p.head?.ref;
-      const headRepo = p.head?.repo?.full_name;
-      const headBranch = git.branch;
-      if (!headRef || !headRepo) return false;
-      return headRef === headBranch && headRepo === fullName;
-    });
-
-    if (!pr) {
-      const closedData = await forgejoFetch(
-        `${baseUrl}/repos/${owner}/${repo}/pulls?state=closed&limit=20`,
-        cred?.token ?? null,
-        cred?.type ?? null,
-      );
-      const closedPrs = ForgejoPrListSchema.parse(closedData);
-      const closedPr = closedPrs.find((p) => {
-        const headRef = p.head?.ref;
-        const headRepo = p.head?.repo?.full_name;
-        const headBranch = git.branch;
-        if (!headRef || !headRepo) return false;
-        return headRef === headBranch && headRepo === fullName;
-      });
-      if (!closedPr) {
-        return { kind: "absent" };
-      }
-      return buildPrResult(closedPr, baseUrl, owner, repo, cred, log);
-    }
-
-    return buildPrResult(pr, baseUrl, owner, repo, cred, log);
-  } catch (err) {
-    const result = classifyForgejoError(err);
-    if (log) logForgejoResolveFailure(err, result, log);
-    return result;
-  }
-}
-
-async function buildPrResult(
-  pr: z.infer<typeof ForgejoPrListSchema>[number],
-  baseUrl: string,
-  owner: string,
-  repo: string,
-  cred: { token: string; type: "Application" | "OAuth" } | null,
-  log?: Logger,
-): Promise<PrResult<ForgejoUnavailableSource>> {
-  const headSha = pr.head?.ref
-    ? await getHeadSha(baseUrl, owner, repo, pr.number, cred)
-    : null;
-
-  let statuses: ForgejoCommitStatus[] | undefined;
-  if (headSha) {
-    try {
-      const statusData = await forgejoFetch(
-        `${baseUrl}/repos/${owner}/${repo}/commits/${headSha}/status`,
-        cred?.token ?? null,
-        cred?.type ?? null,
-      );
-      const parsed = ForgejoStatusResponseSchema.parse(statusData);
-      statuses = parsed.statuses;
-    } catch (e) {
-      log?.warn?.({ err: String(e) }, "forgejo: commit status fetch failed");
-    }
+  const pr = await findPr(git.branch, baseUrl, owner, repo, cred);
+  if (!pr) {
+    return { kind: "absent" };
   }
 
+  const headSha = await fetchHeadSha(baseUrl, owner, repo, pr.number, cred);
+  const statuses = headSha
+    ? await fetchCommitStatuses(baseUrl, owner, repo, headSha, cred, log)
+    : undefined;
+
+  const checks = extractForgejoChecks(statuses);
   return {
     kind: "ok",
     value: {
@@ -246,29 +139,62 @@ async function buildPrResult(
       title: pr.title,
       url: pr.html_url,
       state: PrStateSchema.parse(
-        mapForgejoPrState({
-          state: pr.state,
-          merged: pr.merged,
-        } as ForgejoPullRequest),
+        mapForgejoPrState({ state: pr.state, merged: pr.merged }),
       ),
-      checks: deriveForgejoCheckStatus(statuses),
-      checkRuns: extractForgejoChecks(statuses),
+      checks: checks.length > 0 ? rollupStatus(checks) : null,
+      checkRuns: checks,
     },
   };
 }
 
-async function getHeadSha(
+function rollupStatus(
+  checks: { outcome: "pass" | "pending" | "fail" }[],
+): "pass" | "pending" | "fail" {
+  let worst: "pass" | "pending" | "fail" = "pass";
+  for (const c of checks) {
+    if (c.outcome === "fail") return "fail";
+    if (c.outcome === "pending") worst = "pending";
+  }
+  return worst;
+}
+
+/** Find the PR for the current branch, querying both open and closed
+ *  states. Matches head repo full_name (not just branch name) to avoid
+ *  fork false-positives. */
+async function findPr(
+  branch: string,
+  baseUrl: string,
+  owner: string,
+  repo: string,
+  cred: Credential | null,
+) {
+  for (const state of ["open", "closed"] as const) {
+    const limit = state === "open" ? 50 : 20;
+    const data = await forgejoFetch(
+      `${baseUrl}/repos/${owner}/${repo}/pulls?state=${state}&limit=${limit}`,
+      cred,
+    );
+    const prs = ForgejoPrListSchema.parse(data);
+    const fullName = `${owner}/${repo}`;
+    const match = prs.find(
+      (p) => p.head?.ref === branch && p.head?.repo?.full_name === fullName,
+    );
+    if (match) return match;
+  }
+  return null;
+}
+
+async function fetchHeadSha(
   baseUrl: string,
   owner: string,
   repo: string,
   prNumber: number,
-  cred: { token: string; type: "Application" | "OAuth" } | null,
+  cred: Credential | null,
 ): Promise<string | null> {
   try {
     const data = await forgejoFetch(
       `${baseUrl}/repos/${owner}/${repo}/pulls/${prNumber}`,
-      cred?.token ?? null,
-      cred?.type ?? null,
+      cred,
     );
     const pr = z
       .object({
@@ -281,24 +207,54 @@ async function getHeadSha(
   }
 }
 
-function logForgejoResolveFailure(
-  err: unknown,
-  result: PrResult,
-  log: Logger,
-): void {
-  const ctx = { err: String(err), result: result.kind };
-  if (result.kind === "absent") {
-    log.debug(ctx, "forgejo: no PR for branch");
-    return;
+/** Fetch commit statuses for a head SHA. Returns undefined when the fetch
+ *  fails — the status is best-effort; a failure here means the user
+ *  sees no CI info for this PR but the PR itself still resolves. */
+async function fetchCommitStatuses(
+  baseUrl: string,
+  owner: string,
+  repo: string,
+  sha: string,
+  cred: Credential | null,
+  log: Logger | undefined,
+): Promise<ForgejoCommitStatus[] | undefined> {
+  try {
+    const data = await forgejoFetch(
+      `${baseUrl}/repos/${owner}/${repo}/commits/${sha}/status`,
+      cred,
+    );
+    const parsed = ForgejoStatusResponseSchema.parse(data);
+    return parsed.statuses;
+  } catch (e) {
+    log?.warn({ err: String(e) }, "forgejo: commit status fetch failed");
+    return undefined;
   }
-  if (result.kind === "unavailable" && result.source.code === "unknown") {
-    log.error(ctx, "forgejo: unknown error");
-    return;
+}
+
+/** Look up the Forgejo PR for the current branch. */
+export async function resolveForgejoPr(
+  git: PrGitContext,
+  log?: Logger,
+): Promise<PrResult<ForgejoUnavailableSource>> {
+  const parsed = parseRemoteUrl(git.remoteUrl ?? "");
+  if (!parsed) {
+    return { kind: "absent" };
   }
-  log.warn(
-    result.kind === "unavailable" ? { ...ctx, code: result.source.code } : ctx,
-    "forgejo: unavailable",
-  );
+  const cred = readForgejoToken(parsed.host, log);
+  try {
+    return await resolveForgejoPrImpl(git, cred, log);
+  } catch (err) {
+    const result = classifyForgejoError(err);
+    if (log) {
+      logPrResolveFailure(err, result, log, {
+        forge: "forgejo",
+        absentMessage: "forgejo: no PR for branch",
+        unknownErrorMessage: "forgejo: unknown error",
+        unavailableMessage: "forgejo: unavailable",
+      });
+    }
+    return result;
+  }
 }
 
 /** The Forgejo adapter — the `PrProvider` the host injects into
