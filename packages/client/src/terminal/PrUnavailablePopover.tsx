@@ -1,15 +1,15 @@
 /** Click-to-open recovery-instructions popover + button trigger for
  *  `PrResult.kind === "unavailable"`. Dispatch happens in two layers:
- *  `ProviderUnavailableContent` matches on `source.provider` (today only
- *  `"gh"`), delegating to a per-provider content component so bkt's future
- *  recovery UX doesn't need to fit a shared mold. Anchored positioning
- *  comes from `useAnchoredPopover`. */
+ *  `ProviderUnavailableContent` matches on `source.provider`, delegating
+ *  to a per-provider content component so each forge's recovery UX
+ *  doesn't need to fit a shared mold. Anchored positioning comes from
+ *  `useAnchoredPopover`. */
 
 import type { GhUnavailableCode } from "kolu-github/schemas";
 import type { ForgejoUnavailableCode } from "kolu-forgejo/schemas";
 import type { PrUnavailableSource } from "kolu-common/surface";
 import { reasonForSource } from "kolu-common/surface";
-import { type Component, createSignal, Show } from "solid-js";
+import { For, type Component, createSignal, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { toast } from "solid-sonner";
 import { match } from "ts-pattern";
@@ -18,23 +18,128 @@ import { WarningIcon } from "../ui/Icons";
 import { surface } from "../ui/Surface";
 import { useAnchoredPopover } from "../ui/useAnchoredPopover";
 
-const AUTH_COMMAND = "gh auth login -s repo,read:org";
+/** Per-code recovery content — the shape every `*UnavailableContent`
+ *  renderer projects to. Either a copy-to-clipboard command (with the
+ *  post-copy helper text) or a free-form body of paragraphs. The shape
+ *  is forge-neutral; only the per-forge table values differ. */
+type RecoveryEntry = {
+  title: string;
+  /** Renderable body — a paragraph can be a string or a copy command. */
+  body: (Paragraph | CopyCommandEntry)[];
+};
+type Paragraph = { kind: "p"; text: string };
+type CopyCommandEntry = { kind: "copy"; command: string; after?: string };
+
+const GH_RECOVERY: Record<GhUnavailableCode, RecoveryEntry> = {
+  "not-authenticated": {
+    title: "GitHub not authenticated",
+    body: [
+      {
+        kind: "p",
+        text: "Kolu reads PRs via gh. Run this once in any terminal:",
+      },
+      {
+        kind: "copy",
+        command: "gh auth login -s repo,read:org",
+        after:
+          "Scopes repo and read:org cover private repos and org-owned PRs.",
+      },
+    ],
+  },
+  "not-installed": {
+    title: "GitHub CLI not installed",
+    body: [
+      {
+        kind: "p",
+        text: "Kolu reads PRs via gh. Install it from cli.github.com and relaunch kolu.",
+      },
+      {
+        kind: "p",
+        text: "Nix installs bundle gh automatically — if you see this, the wrapper isn't in use.",
+      },
+    ],
+  },
+  "timed-out": {
+    title: "GitHub timed out",
+    body: [
+      {
+        kind: "p",
+        text: "gh pr view took longer than 5s. Kolu will retry on the next branch change or polling tick.",
+      },
+    ],
+  },
+  unknown: {
+    title: "GitHub lookup failed",
+    body: [
+      {
+        kind: "p",
+        text: "An unrecognized error from gh. Check kolu server logs for details; kolu will retry on the next branch change.",
+      },
+    ],
+  },
+};
+
+const FORGEJO_RECOVERY: Record<ForgejoUnavailableCode, RecoveryEntry> = {
+  "not-authenticated": {
+    title: "Forgejo not authenticated",
+    body: [
+      {
+        kind: "p",
+        text: "Kolu reads PRs from Forgejo/Codeberg via fj. Run this once in any terminal:",
+      },
+      {
+        kind: "copy",
+        command: "fj auth login",
+        after:
+          "Self-hosted instances need fj auth login --host <url>. Alternatively, set KOLU_FORGEJO_TOKEN.",
+      },
+    ],
+  },
+  "not-found": {
+    title: "Forgejo PR not found",
+    body: [
+      {
+        kind: "p",
+        text: "The repository or PR doesn't exist on this Forgejo instance. Check that the remote URL points to the correct host and that the PR hasn't been deleted.",
+      },
+    ],
+  },
+  "timed-out": {
+    title: "Forgejo timed out",
+    body: [
+      {
+        kind: "p",
+        text: "The Forgejo API request took longer than 5s. Kolu will retry on the next branch change or polling tick.",
+      },
+    ],
+  },
+  unknown: {
+    title: "Forgejo lookup failed",
+    body: [
+      {
+        kind: "p",
+        text: "An unrecognized error from the Forgejo API. Check kolu server logs for details; kolu will retry on the next branch change.",
+      },
+    ],
+  },
+};
 
 export const ProviderUnavailableContent: Component<{
   source: PrUnavailableSource;
 }> = (props) =>
   match(props.source)
     .with({ provider: "gh" }, ({ code }) => (
-      <GhUnavailableContent code={code} />
+      <RecoveryContent entry={GH_RECOVERY[code]} />
     ))
     .with({ provider: "forgejo" }, ({ code }) => (
-      <ForgejoUnavailableContent code={code} />
+      <RecoveryContent entry={FORGEJO_RECOVERY[code]} />
     ))
     .exhaustive();
 
-const GhUnavailableContent: Component<{ code: GhUnavailableCode }> = (
-  props,
-) => {
+/** Renderer for one recovery entry — paragraphs and copy commands. The
+ *  copy button gets its own open-state signal so the two providers share
+ *  the render and the clipboard UX. */
+const RecoveryContent: Component<{ entry: RecoveryEntry }> = (props) => {
   const [copied, setCopied] = createSignal(false);
 
   const copy = async (text: string) => {
@@ -47,134 +152,51 @@ const GhUnavailableContent: Component<{ code: GhUnavailableCode }> = (
     }
   };
 
-  return match(props.code)
-    .with("not-authenticated", () => (
-      <>
-        <div class="font-medium text-fg">GitHub not authenticated</div>
-        <p class="text-fg-2 leading-relaxed">
-          Kolu reads PRs via <code class="font-mono">gh</code>. Run this once in
-          any terminal:
-        </p>
-        <CopyCommand
-          command={AUTH_COMMAND}
-          copied={copied()}
-          onCopy={() => copy(AUTH_COMMAND)}
-        />
-        <p class="text-fg-3 leading-relaxed">
-          Scopes <code class="font-mono">repo</code> and{" "}
-          <code class="font-mono">read:org</code> cover private repos and
-          org-owned PRs.
-        </p>
-      </>
-    ))
-    .with("not-installed", () => (
-      <>
-        <div class="font-medium text-fg">GitHub CLI not installed</div>
-        <p class="text-fg-2 leading-relaxed">
-          Kolu reads PRs via <code class="font-mono">gh</code>. Install it from{" "}
-          <a
-            href="https://cli.github.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="text-accent hover:underline"
-          >
-            cli.github.com
-          </a>{" "}
-          and relaunch kolu.
-        </p>
-        <p class="text-fg-3 leading-relaxed">
-          Nix installs bundle <code class="font-mono">gh</code> automatically —
-          if you see this, the wrapper isn't in use.
-        </p>
-      </>
-    ))
-    .with("timed-out", () => (
-      <>
-        <div class="font-medium text-fg">GitHub timed out</div>
-        <p class="text-fg-2 leading-relaxed">
-          <code class="font-mono">gh pr view</code> took longer than 5s. Kolu
-          will retry on the next branch change or polling tick.
-        </p>
-      </>
-    ))
-    .with("unknown", () => (
-      <>
-        <div class="font-medium text-fg">GitHub lookup failed</div>
-        <p class="text-fg-2 leading-relaxed">
-          An unrecognized error from <code class="font-mono">gh</code>. Check
-          kolu server logs for details; kolu will retry on the next branch
-          change.
-        </p>
-      </>
-    ))
-    .exhaustive();
+  return (
+    <>
+      <div class="font-medium text-fg">{props.entry.title}</div>
+      <For each={props.entry.body}>
+        {(block) => {
+          if (block.kind === "p") {
+            return (
+              <p class="text-fg-2 leading-relaxed">
+                {parseInlineCode(block.text)}
+              </p>
+            );
+          }
+          return (
+            <>
+              <CopyCommand
+                command={block.command}
+                copied={copied()}
+                onCopy={() => copy(block.command)}
+              />
+              {block.after && (
+                <p class="text-fg-3 leading-relaxed">
+                  {parseInlineCode(block.after)}
+                </p>
+              )}
+            </>
+          );
+        }}
+      </For>
+    </>
+  );
 };
 
-const ForgejoUnavailableContent: Component<{
-  code: ForgejoUnavailableCode;
-}> = (props) => {
-  const [copied, setCopied] = createSignal(false);
-
-  const copy = async (text: string) => {
-    try {
-      await writeTextToClipboard(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch (err) {
-      toast.error(`Couldn't copy: ${(err as Error).message}`);
+/** Render a string that may contain backtick-delimited code spans as a
+ *  mix of text and `<code>` elements. Single-backtick spans only. */
+function parseInlineCode(
+  text: string,
+): (string | import("solid-js").JSX.Element)[] {
+  const parts = text.split(/(`[^`]+`)/);
+  return parts.map((p, i) => {
+    if (p.startsWith("`") && p.endsWith("`")) {
+      return <code class="font-mono">{p.slice(1, -1)}</code>;
     }
-  };
-
-  return match(props.code)
-    .with("not-authenticated", () => (
-      <>
-        <div class="font-medium text-fg">Forgejo not authenticated</div>
-        <p class="text-fg-2 leading-relaxed">
-          Kolu reads PRs from Forgejo/Codeberg via{" "}
-          <code class="font-mono">fj</code>. Run this once in any terminal:
-        </p>
-        <CopyCommand
-          command="fj auth login"
-          copied={copied()}
-          onCopy={() => copy("fj auth login")}
-        />
-        <p class="text-fg-3 leading-relaxed">
-          Self-hosted instances need{" "}
-          <code class="font-mono">fj auth login --host &lt;url&gt;</code>.
-          Alternatively, set <code class="font-mono">KOLU_FORGEJO_TOKEN</code>.
-        </p>
-      </>
-    ))
-    .with("not-found", () => (
-      <>
-        <div class="font-medium text-fg">Forgejo PR not found</div>
-        <p class="text-fg-2 leading-relaxed">
-          The repository or PR doesn't exist on this Forgejo instance. Check
-          that the remote URL points to the correct host and that the PR hasn't
-          been deleted.
-        </p>
-      </>
-    ))
-    .with("timed-out", () => (
-      <>
-        <div class="font-medium text-fg">Forgejo timed out</div>
-        <p class="text-fg-2 leading-relaxed">
-          The Forgejo API request took longer than 5s. Kolu will retry on the
-          next branch change or polling tick.
-        </p>
-      </>
-    ))
-    .with("unknown", () => (
-      <>
-        <div class="font-medium text-fg">Forgejo lookup failed</div>
-        <p class="text-fg-2 leading-relaxed">
-          An unrecognized error from the Forgejo API. Check kolu server logs for
-          details; kolu will retry on the next branch change.
-        </p>
-      </>
-    ))
-    .exhaustive();
-};
+    return p;
+  });
+}
 
 const PrUnavailablePopover: Component<{
   open: boolean;
