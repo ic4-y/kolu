@@ -46,7 +46,7 @@ import type {
 } from "anyagent";
 import { agentInfoEqual, parseAgentCommand } from "anyagent";
 import { isForgejoHost, subscribePr } from "anyforge";
-import type { PrGitContext, PrProvider, PrResult } from "anyforge";
+import type { PrGitContext, PrProvider } from "anyforge";
 import { subscribeGitInfo } from "kolu-git";
 import type { GitInfo } from "kolu-git/schemas";
 import { githubPrProvider } from "kolu-github";

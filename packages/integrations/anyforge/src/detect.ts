@@ -74,15 +74,17 @@ export function parseRemoteUrl(
     pathname = parsed.pathname;
   } catch {
     const m = /^(?:[^@/]+@)?[^@:/]+:(.*)$/.exec(trimmed);
-    if (!m) return null;
-    pathname = m[1]!;
+    if (!m || m[1] === undefined) return null;
+    pathname = m[1];
   }
   const parts = pathname
     .replace(/\.git$/, "")
     .split("/")
     .filter((p) => p.length > 0);
   if (parts.length < 2) return null;
-  return { host, owner: parts[0]!, repo: parts[1]! };
+  const [owner, repo] = parts;
+  if (owner === undefined || repo === undefined) return null;
+  return { host, owner, repo };
 }
 
 /** Whether `host` is configured as a Forgejo/Gitea instance. The closed

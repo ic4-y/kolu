@@ -190,7 +190,7 @@ function parseInlineCode(
   text: string,
 ): (string | import("solid-js").JSX.Element)[] {
   const parts = text.split(/(`[^`]+`)/);
-  return parts.map((p, i) => {
+  return parts.map((p) => {
     if (p.startsWith("`") && p.endsWith("`")) {
       return <code class="font-mono">{p.slice(1, -1)}</code>;
     }

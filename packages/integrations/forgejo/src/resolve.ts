@@ -84,7 +84,7 @@ async function forgejoFetch(
     Accept: "application/json",
   };
   if (cred) {
-    headers["Authorization"] =
+    headers.Authorization =
       cred.type === "OAuth" ? `Bearer ${cred.token}` : `token ${cred.token}`;
   }
   const controller = new AbortController();
