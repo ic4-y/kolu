@@ -166,3 +166,21 @@ function checkRunsEqual(a: CheckRun[], b: CheckRun[]): boolean {
     (ai, i) => ai.name === b[i]?.name && ai.outcome === b[i]?.outcome,
   );
 }
+
+/** Combine a list of per-check outcomes into a single rollup status.
+ *  "fail" is terminal — short-circuit; "pending" is sticky until something
+ *  fails. Returns null when no checks are configured (empty list).
+ *
+ *  Lives in the leaf because the algorithm is forge-neutral — both
+ *  GitHub's `statusCheckRollup` and Forgejo's `commit statuses` feed
+ *  it. Adapters map their API's response shape into `CheckRun[]` and
+ *  then collapse here. */
+export function deriveCheckStatus(checks: CheckRun[]): CheckStatus | null {
+  if (checks.length === 0) return null;
+  let worst: CheckStatus = "pass";
+  for (const c of checks) {
+    if (c.outcome === "fail") return "fail";
+    if (c.outcome === "pending") worst = "pending";
+  }
+  return worst;
+}

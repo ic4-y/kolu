@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { classifyGhError, deriveCheckStatus } from "./github.ts";
+import { classifyGhError, deriveCheckStatusFromRollup } from "./github.ts";
 
-describe("deriveCheckStatus", () => {
+describe("deriveCheckStatusFromRollup", () => {
   it("returns null for undefined rollup", () => {
-    expect(deriveCheckStatus(undefined)).toBeNull();
+    expect(deriveCheckStatusFromRollup(undefined)).toBeNull();
   });
 
   it("returns null for empty rollup", () => {
-    expect(deriveCheckStatus([])).toBeNull();
+    expect(deriveCheckStatusFromRollup([])).toBeNull();
   });
 
   it.each([
@@ -17,9 +17,9 @@ describe("deriveCheckStatus", () => {
     { state: "PENDING", expected: "pending" },
     { state: "EXPECTED", expected: "pending" },
   ])("StatusContext $state → $expected", ({ state, expected }) => {
-    expect(deriveCheckStatus([{ __typename: "StatusContext", state }])).toBe(
-      expected,
-    );
+    expect(
+      deriveCheckStatusFromRollup([{ __typename: "StatusContext", state }]),
+    ).toBe(expected);
   });
 
   it.each([
@@ -36,9 +36,9 @@ describe("deriveCheckStatus", () => {
     conclusion,
     expected,
   }) => {
-    expect(deriveCheckStatus([{ status: "COMPLETED", conclusion }])).toBe(
-      expected,
-    );
+    expect(
+      deriveCheckStatusFromRollup([{ status: "COMPLETED", conclusion }]),
+    ).toBe(expected);
   });
 
   it.each([
@@ -48,12 +48,12 @@ describe("deriveCheckStatus", () => {
     "PENDING",
     "REQUESTED",
   ])("non-terminal CheckRun %s → pending", (status) => {
-    expect(deriveCheckStatus([{ status }])).toBe("pending");
+    expect(deriveCheckStatusFromRollup([{ status }])).toBe("pending");
   });
 
   it("failure takes priority over pending", () => {
     expect(
-      deriveCheckStatus([
+      deriveCheckStatusFromRollup([
         { __typename: "StatusContext", state: "PENDING" },
         { __typename: "StatusContext", state: "FAILURE" },
       ]),
@@ -62,7 +62,7 @@ describe("deriveCheckStatus", () => {
 
   it("pending takes priority over pass", () => {
     expect(
-      deriveCheckStatus([
+      deriveCheckStatusFromRollup([
         { __typename: "StatusContext", state: "SUCCESS" },
         { status: "IN_PROGRESS" },
       ]),
@@ -71,7 +71,9 @@ describe("deriveCheckStatus", () => {
 
   it("handles case-insensitive state values", () => {
     expect(
-      deriveCheckStatus([{ __typename: "StatusContext", state: "failure" }]),
+      deriveCheckStatusFromRollup([
+        { __typename: "StatusContext", state: "failure" },
+      ]),
     ).toBe("fail");
   });
 });

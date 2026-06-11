@@ -5,5 +5,9 @@
  *  and detection live in `anyforge`; this package never sees its sibling
  *  adapters. */
 
-export { classifyGhError, deriveCheckStatus, extractChecks } from "./github.ts";
+export {
+  classifyGhError,
+  deriveCheckStatusFromRollup,
+  extractChecks,
+} from "./github.ts";
 export { githubPrProvider, resolveGitHubPr } from "./resolve.ts";

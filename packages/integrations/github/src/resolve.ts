@@ -8,8 +8,13 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { PrGitContext, PrProvider, PrResult } from "anyforge";
 import { PrStateSchema } from "anyforge/schemas";
+import { logPrResolveFailure } from "anyforge";
 import type { Logger } from "kolu-shared";
-import { classifyGhError, deriveCheckStatus, extractChecks } from "./github.ts";
+import {
+  classifyGhError,
+  deriveCheckStatusFromRollup,
+  extractChecks,
+} from "./github.ts";
 import type { GhUnavailableSource } from "./schemas.ts";
 
 const execFileAsync = promisify(execFile);
@@ -40,7 +45,7 @@ interface GhPrViewResult {
   title: string;
   url: string;
   state: string;
-  statusCheckRollup?: Parameters<typeof deriveCheckStatus>[0];
+  statusCheckRollup?: Parameters<typeof deriveCheckStatusFromRollup>[0];
 }
 
 /** Look up the GitHub PR for the current branch.
@@ -72,7 +77,7 @@ export async function resolveGitHubPr(
         title: data.title,
         url: data.url,
         state: PrStateSchema.parse(data.state.toLowerCase()),
-        checks: deriveCheckStatus(data.statusCheckRollup),
+        checks: deriveCheckStatusFromRollup(data.statusCheckRollup),
         checkRuns: extractChecks(data.statusCheckRollup),
       },
     };
@@ -83,28 +88,18 @@ export async function resolveGitHubPr(
   }
 }
 
-/** Route a failed `gh pr view` result to the appropriate log level.
- *  absent = expected (branch has no PR) → debug.
- *  unavailable with code `unknown` = an actual unexpected error → error.
- *  unavailable with any other code = degraded-but-recoverable → warn. */
+/** Route a failed `gh pr view` result to the appropriate log level. */
 function logGhResolveFailure(
   err: unknown,
   result: PrResult,
   log: Logger,
 ): void {
-  const ctx = { err: String(err), result: result.kind };
-  if (result.kind === "absent") {
-    log.debug(ctx, "gh pr view: no PR for branch");
-    return;
-  }
-  if (result.kind === "unavailable" && result.source.code === "unknown") {
-    log.error(ctx, "gh pr view: unknown error");
-    return;
-  }
-  log.warn(
-    result.kind === "unavailable" ? { ...ctx, code: result.source.code } : ctx,
-    "gh pr view: unavailable",
-  );
+  logPrResolveFailure(err, result, log, {
+    forge: "gh",
+    absentMessage: "gh pr view: no PR for branch",
+    unknownErrorMessage: "gh pr view: unknown error",
+    unavailableMessage: "gh pr view: unavailable",
+  });
 }
 
 /** The gh adapter — the `PrProvider` the host injects into `subscribePr`.

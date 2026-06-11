@@ -2,6 +2,7 @@
  *  these with the `gh pr view` spawn; the wire shapes they produce live in
  *  `anyforge/schemas`. */
 
+import { deriveCheckStatus, prValue } from "anyforge/schemas";
 import type { CheckRun, PrInfo, PrResult } from "anyforge/schemas";
 import { match, P } from "ts-pattern";
 import type { GhUnavailableCode, GhUnavailableSource } from "./schemas.ts";
@@ -20,6 +21,9 @@ import type { GhUnavailableCode, GhUnavailableSource } from "./schemas.ts";
  *   state: SUCCESS | PENDING | FAILURE | ERROR | EXPECTED
  *
  * See: https://docs.github.com/en/graphql/reference/unions#statuscheckrollupcontext
+ *
+ * Returns the per-check entry list; the rollup is then collapsed by
+ * `deriveCheckStatus` in anyforge (shared with kolu-forgejo).
  */
 type CheckOutcome = "fail" | "pending" | "pass";
 
@@ -58,18 +62,10 @@ function classifyCheck(check: RollupEntry): CheckOutcome {
     .otherwise(() => "pass" as const);
 }
 
-export function deriveCheckStatus(
+export function deriveCheckStatusFromRollup(
   rollup: RollupEntry[] | undefined,
 ): PrInfo["checks"] {
-  if (!rollup || rollup.length === 0) return null;
-  // "fail" is terminal — short-circuit; "pending" is sticky until something fails.
-  let worst: CheckOutcome = "pass";
-  for (const check of rollup) {
-    const outcome = classifyCheck(check);
-    if (outcome === "fail") return "fail";
-    if (outcome === "pending") worst = "pending";
-  }
-  return worst;
+  return deriveCheckStatus(extractChecks(rollup));
 }
 
 /** Per-check breakdown of the rollup — the same entries `deriveCheckStatus`
