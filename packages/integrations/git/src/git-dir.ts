@@ -46,3 +46,13 @@ function revParseDir(cwd: string, flag: string): string | null {
 export function resolveGitDir(cwd: string): string | null {
   return revParseDir(cwd, "--git-dir");
 }
+
+/** Common git dir (`--git-common-dir`). In a linked worktree this points
+ *  back to the main repo's `.git/` — where `config` (and thus
+ *  `remote.origin.url`) actually lives. The per-worktree `--git-dir`
+ *  (`.git/worktrees/<name>`) has no `config` file; watching it for
+ *  remote-url changes would miss every `git remote set-url` from inside
+ *  a worktree. */
+export function resolveGitCommonDir(cwd: string): string | null {
+  return revParseDir(cwd, "--git-common-dir");
+}

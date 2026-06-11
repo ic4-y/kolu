@@ -6,6 +6,7 @@
  *  comes from `useAnchoredPopover`. */
 
 import type { GhUnavailableCode } from "kolu-github/schemas";
+import type { ForgejoUnavailableCode } from "kolu-forgejo/schemas";
 import type { PrUnavailableSource } from "kolu-common/surface";
 import { reasonForSource } from "kolu-common/surface";
 import { type Component, createSignal, Show } from "solid-js";
@@ -25,6 +26,9 @@ export const ProviderUnavailableContent: Component<{
   match(props.source)
     .with({ provider: "gh" }, ({ code }) => (
       <GhUnavailableContent code={code} />
+    ))
+    .with({ provider: "forgejo" }, ({ code }) => (
+      <ForgejoUnavailableContent code={code} />
     ))
     .exhaustive();
 
@@ -100,6 +104,72 @@ const GhUnavailableContent: Component<{ code: GhUnavailableCode }> = (
           An unrecognized error from <code class="font-mono">gh</code>. Check
           kolu server logs for details; kolu will retry on the next branch
           change.
+        </p>
+      </>
+    ))
+    .exhaustive();
+};
+
+const ForgejoUnavailableContent: Component<{
+  code: ForgejoUnavailableCode;
+}> = (props) => {
+  const [copied, setCopied] = createSignal(false);
+
+  const copy = async (text: string) => {
+    try {
+      await writeTextToClipboard(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      toast.error(`Couldn't copy: ${(err as Error).message}`);
+    }
+  };
+
+  return match(props.code)
+    .with("not-authenticated", () => (
+      <>
+        <div class="font-medium text-fg">Forgejo not authenticated</div>
+        <p class="text-fg-2 leading-relaxed">
+          Kolu reads PRs from Forgejo/Codeberg via{" "}
+          <code class="font-mono">fj</code>. Run this once in any terminal:
+        </p>
+        <CopyCommand
+          command="fj auth login"
+          copied={copied()}
+          onCopy={() => copy("fj auth login")}
+        />
+        <p class="text-fg-3 leading-relaxed">
+          Self-hosted instances need{" "}
+          <code class="font-mono">fj auth login --host &lt;url&gt;</code>.
+          Alternatively, set <code class="font-mono">KOLU_FORGEJO_TOKEN</code>.
+        </p>
+      </>
+    ))
+    .with("not-found", () => (
+      <>
+        <div class="font-medium text-fg">Forgejo PR not found</div>
+        <p class="text-fg-2 leading-relaxed">
+          The repository or PR doesn't exist on this Forgejo instance. Check
+          that the remote URL points to the correct host and that the PR hasn't
+          been deleted.
+        </p>
+      </>
+    ))
+    .with("timed-out", () => (
+      <>
+        <div class="font-medium text-fg">Forgejo timed out</div>
+        <p class="text-fg-2 leading-relaxed">
+          The Forgejo API request took longer than 5s. Kolu will retry on the
+          next branch change or polling tick.
+        </p>
+      </>
+    ))
+    .with("unknown", () => (
+      <>
+        <div class="font-medium text-fg">Forgejo lookup failed</div>
+        <p class="text-fg-2 leading-relaxed">
+          An unrecognized error from the Forgejo API. Check kolu server logs for
+          details; kolu will retry on the next branch change.
         </p>
       </>
     ))

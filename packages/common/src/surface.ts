@@ -47,6 +47,10 @@ import {
 } from "kolu-git/schemas";
 import { PrInfoSchema } from "anyforge/schemas";
 import { GhUnavailableSchema, reasonForGhCode } from "kolu-github/schemas";
+import {
+  ForgejoUnavailableSchema,
+  reasonForForgejoCode,
+} from "kolu-forgejo/schemas";
 import { OpenCodeInfoSchema } from "kolu-opencode/schemas";
 import { match } from "ts-pattern";
 import { z } from "zod";
@@ -77,6 +81,7 @@ export const AgentInfoSchema = z.discriminatedUnion("kind", [
  *  and a new forge is a compile error at every dispatch. */
 export const PrUnavailableSourceSchema = z.discriminatedUnion("provider", [
   GhUnavailableSchema,
+  ForgejoUnavailableSchema,
 ]);
 export type PrUnavailableSource = z.infer<typeof PrUnavailableSourceSchema>;
 
@@ -101,6 +106,7 @@ export type PrResult = z.infer<typeof PrResultSchema>;
 export function reasonForSource(source: PrUnavailableSource): string {
   return match(source)
     .with({ provider: "gh" }, ({ code }) => reasonForGhCode(code))
+    .with({ provider: "forgejo" }, ({ code }) => reasonForForgejoCode(code))
     .exhaustive();
 }
 

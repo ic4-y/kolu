@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Logger } from "kolu-shared";
 import { simpleGit } from "simple-git";
+import { watchGitConfig } from "./config-watcher.ts";
 import { watchCwdForGitDir } from "./cwd-git-watcher.ts";
 import { err, type GitResult, ok } from "./errors.ts";
 import { watchGitHead } from "./head-watcher.ts";
@@ -21,6 +22,50 @@ export function hasGitDir(cwd: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Best-effort `git remote get-url origin` with credentials stripped.
+ *  Returns null when the repo has no origin or the lookup fails.
+ *  HTTPS URLs may contain embedded credentials (`https://user:token@host/...`);
+ *  those are stripped before the value reaches GitInfo so the field is safe
+ *  to persist (state file) and publish (terminal metadata). SCP-style SSH
+ *  remotes (`git@host:path`) pass through unchanged — the user portion is
+ *  an SSH user, not a secret. */
+export async function resolveRemoteUrl(
+  cwd: string,
+  log?: Logger,
+): Promise<string | null> {
+  try {
+    const git = simpleGit(cwd);
+    const url = (await git.raw(["remote", "get-url", "origin"])).trim();
+    if (!url) return null;
+    return stripRemoteCredentials(url);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (/no such remote|no.*remote|origin/i.test(message)) {
+      log?.debug({ err: message, cwd }, "git: no origin remote");
+      return null;
+    }
+    log?.warn({ err: message, cwd }, "git: resolveRemoteUrl failed");
+    return null;
+  }
+}
+
+/** Strip username/password from an HTTPS remote URL. SCP-style SSH remotes
+ *  (`git@host:path`) aren't parseable by `new URL()` and pass through
+ *  unchanged — the user portion there is an SSH user, not a credential. */
+function stripRemoteCredentials(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password) {
+      parsed.username = "";
+      parsed.password = "";
+      return parsed.toString();
+    }
+    return url;
+  } catch {
+    return url;
   }
 }
 
@@ -72,6 +117,7 @@ export async function resolveGitInfo(
         branch,
         isWorktree: false,
         mainRepoRoot: repoRoot,
+        remoteUrl: await resolveRemoteUrl(cwd, log),
       });
     }
     const repoRoot = (await git.revparse(["--show-toplevel"])).trim();
@@ -98,6 +144,7 @@ export async function resolveGitInfo(
       branch,
       isWorktree,
       mainRepoRoot,
+      remoteUrl: await resolveRemoteUrl(cwd, log),
     });
   } catch (e) {
     // Log so unexpected failures (permission errors, missing git binary)
@@ -120,7 +167,8 @@ export function gitInfoEqual(a: GitInfo | null, b: GitInfo | null): boolean {
   return (
     a.repoRoot === b.repoRoot &&
     a.branch === b.branch &&
-    a.worktreePath === b.worktreePath
+    a.worktreePath === b.worktreePath &&
+    a.remoteUrl === b.remoteUrl
   );
 }
 
@@ -168,7 +216,12 @@ export function subscribeGitInfo(
     if (mode === "cwd") {
       return watchCwdForGitDir(currentCwd, handleWatcherEvent, log);
     }
-    return watchGitHead(currentCwd, handleWatcherEvent, log);
+    const stopHead = watchGitHead(currentCwd, handleWatcherEvent, log);
+    const stopConfig = watchGitConfig(currentCwd, handleWatcherEvent, log);
+    return () => {
+      stopHead();
+      stopConfig();
+    };
   }
 
   function ensureMode(mode: WatcherMode): void {

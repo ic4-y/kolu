@@ -190,6 +190,9 @@ importers:
       kolu-common:
         specifier: workspace:*
         version: link:../common
+      kolu-forgejo:
+        specifier: workspace:*
+        version: link:../integrations/forgejo
       kolu-git:
         specifier: workspace:*
         version: link:../integrations/git
@@ -238,6 +241,9 @@ importers:
       kolu-codex:
         specifier: workspace:*
         version: link:../integrations/codex
+      kolu-forgejo:
+        specifier: workspace:*
+        version: link:../integrations/forgejo
       kolu-git:
         specifier: workspace:*
         version: link:../integrations/git
@@ -362,6 +368,31 @@ importers:
       kolu-transcript-core:
         specifier: workspace:*
         version: link:../../transcript-core
+      ts-pattern:
+        specifier: ^5.9.0
+        version: 5.9.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.0(@types/node@22.19.15)(vite@6.4.2(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.21.0)(yaml@2.8.3))
+
+  packages/integrations/forgejo:
+    dependencies:
+      anyforge:
+        specifier: workspace:*
+        version: link:../anyforge
+      kolu-shared:
+        specifier: workspace:*
+        version: link:../../shared
       ts-pattern:
         specifier: ^5.9.0
         version: 5.9.0
@@ -680,6 +711,9 @@ importers:
       kolu-common:
         specifier: workspace:*
         version: link:../common
+      kolu-forgejo:
+        specifier: workspace:*
+        version: link:../integrations/forgejo
       kolu-git:
         specifier: workspace:*
         version: link:../integrations/git

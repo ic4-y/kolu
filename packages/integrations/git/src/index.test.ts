@@ -349,6 +349,7 @@ describe("gitInfoEqual", () => {
     branch: "main",
     isWorktree: false,
     mainRepoRoot: "/home/user/repo",
+    remoteUrl: null,
   };
 
   it("returns true for identical references", () => {

@@ -12,6 +12,11 @@ export const GitInfoSchema = z.object({
   branch: z.string(),
   isWorktree: z.boolean(),
   mainRepoRoot: z.string(),
+  /** Best-effort `git remote get-url origin`. Null when the repo has no
+   *  origin remote or the lookup fails. Credentials (user:pass in HTTPS
+   *  URLs) are stripped before this field is populated so the value is
+   *  safe to persist and publish. */
+  remoteUrl: z.string().nullable(),
 });
 
 // --- Git worktree operations ---

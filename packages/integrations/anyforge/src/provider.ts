@@ -11,10 +11,14 @@ import type { Logger } from "kolu-shared";
 import type { PrResult, PrUnavailableSourceBase } from "./schemas.ts";
 
 /** The git state a resolve needs — handed through `PrWatcher.setGit` and
- *  passed verbatim to the provider. */
+ *  passed verbatim to the provider. `remoteUrl` is optional: providers
+ *  that need it (Forgejo, for host detection + token lookup) read it;
+ *  providers that don't (GitHub, which resolves via git remote tracking
+ *  from the repo root) ignore it. */
 export type PrGitContext = {
   repoRoot: string;
   branch: string;
+  remoteUrl?: string | null;
 };
 
 export interface PrProvider<

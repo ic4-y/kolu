@@ -42,7 +42,11 @@ function gitContextEqual(
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  return a.repoRoot === b.repoRoot && a.branch === b.branch;
+  return (
+    a.repoRoot === b.repoRoot &&
+    a.branch === b.branch &&
+    (a.remoteUrl ?? null) === (b.remoteUrl ?? null)
+  );
 }
 
 /** Subscribe to PR changes for a terminal. `provider` is the single

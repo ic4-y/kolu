@@ -46,11 +46,15 @@ import type {
 } from "anyagent";
 import { agentInfoEqual, parseAgentCommand } from "anyagent";
 import { subscribePr } from "anyforge";
+import { detectForge, type ForgeKind } from "anyforge";
+import type { PrGitContext, PrProvider, PrResult } from "anyforge";
+import type { PrUnavailableSource } from "kolu-common/surface";
 import { claudeCodeProvider } from "kolu-claude-code";
 import { codexProvider } from "kolu-codex";
 import { subscribeGitInfo } from "kolu-git";
 import type { GitInfo } from "kolu-git/schemas";
 import { githubPrProvider } from "kolu-github";
+import { forgejoPrProvider } from "kolu-forgejo";
 import type {
   AgentInfo,
   LiveTerminalFields,
@@ -256,9 +260,26 @@ function startPrProvider(
 ): () => void {
   const plog = log.child({ provider: "pr", terminal: terminalId });
   plog.debug("started");
-  // The gh adapter resolves the PR for every git context this watcher sees.
+  // Forge dispatch: detectForge classifies the remote URL, the registry
+  // picks the adapter. Unknown forges fall through to the gh adapter
+  // (gh handles GHE; after phase 0a it degrades to silent absent on
+  // hosts it doesn't know).
+  const registry: Record<ForgeKind, PrProvider<PrUnavailableSource>> = {
+    github: githubPrProvider as PrProvider<PrUnavailableSource>,
+    forgejo: forgejoPrProvider as PrProvider<PrUnavailableSource>,
+  };
+  const compositeProvider: PrProvider<PrUnavailableSource> = {
+    kind: "composite",
+    async resolve(
+      git: PrGitContext,
+      log?: import("kolu-shared").Logger,
+    ): Promise<PrResult<PrUnavailableSource>> {
+      const forge = detectForge(git.remoteUrl ?? null);
+      return registry[forge].resolve(git, log);
+    },
+  };
   const watcher = subscribePr(
-    githubPrProvider,
+    compositeProvider,
     (pr) => {
       hooks.updateServerLiveMetadata(record, (m) => {
         m.pr = pr;
@@ -280,7 +301,13 @@ function startPrProvider(
   const cleanup = channels.git.consume({
     onEvent: (git) =>
       watcher.setGit(
-        git ? { repoRoot: git.repoRoot, branch: git.branch } : null,
+        git
+          ? {
+              repoRoot: git.repoRoot,
+              branch: git.branch,
+              remoteUrl: git.remoteUrl,
+            }
+          : null,
       ),
     onError: (err) => plog.error({ err }, "publisher subscription failed"),
   });

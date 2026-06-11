@@ -18,6 +18,8 @@ export {
 export { err, type GitError, type GitResult, ok } from "./errors.ts";
 // HEAD watcher (refcounted shared singleton)
 export { watchGitHead } from "./head-watcher.ts";
+// Config watcher (refcounted shared singleton, catches remote URL changes)
+export { watchGitConfig } from "./config-watcher.ts";
 // Index watcher (refcounted shared singleton, axis 3)
 export { watchGitIndex } from "./index-watcher.ts";
 // Reflog watcher (refcounted shared singleton, axis 2)
@@ -29,6 +31,7 @@ export {
   gitInfoEqual,
   hasGitDir,
   resolveGitInfo,
+  resolveRemoteUrl,
   subscribeGitInfo,
 } from "./resolve.ts";
 
