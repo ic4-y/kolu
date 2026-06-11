@@ -45,16 +45,15 @@ import type {
   AgentWatcher,
 } from "anyagent";
 import { agentInfoEqual, parseAgentCommand } from "anyagent";
-import { subscribePr } from "anyforge";
-import { detectForge, type ForgeKind } from "anyforge";
+import { isForgejoHost, subscribePr } from "anyforge";
 import type { PrGitContext, PrProvider, PrResult } from "anyforge";
-import type { PrUnavailableSource } from "kolu-common/surface";
-import { claudeCodeProvider } from "kolu-claude-code";
-import { codexProvider } from "kolu-codex";
 import { subscribeGitInfo } from "kolu-git";
 import type { GitInfo } from "kolu-git/schemas";
 import { githubPrProvider } from "kolu-github";
 import { forgejoPrProvider } from "kolu-forgejo";
+import type { PrUnavailableSource } from "kolu-common/surface";
+import { claudeCodeProvider } from "kolu-claude-code";
+import { codexProvider } from "kolu-codex";
 import type {
   AgentInfo,
   LiveTerminalFields,
@@ -252,6 +251,38 @@ function startGitProvider(
 
 // ── PR watcher ────────────────────────────────────────────────────────
 
+/** The closed `ForgeKind` set of adapter forges. Lives here, not in the
+ *  anyforge leaf — the leaf is forge-agnostic. */
+type ForgeKind = "github" | "forgejo";
+
+/** Module-scope registry + composite provider: built once, shared by
+ *  every terminal's `startPrProvider` call. The dispatch logic is
+ *  `isForgejoHost(host) ? forgejo : github` — sync, pure, no network. */
+const PR_REGISTRY: Record<ForgeKind, PrProvider<PrUnavailableSource>> = {
+  github: githubPrProvider as PrProvider<PrUnavailableSource>,
+  forgejo: forgejoPrProvider as PrProvider<PrUnavailableSource>,
+};
+function pickProvider(host: string | null): PrProvider<PrUnavailableSource> {
+  return host !== null && isForgejoHost(host)
+    ? PR_REGISTRY.forgejo
+    : PR_REGISTRY.github;
+}
+const PR_PROVIDER: PrProvider<PrUnavailableSource> = {
+  kind: "composite",
+  resolve: (git, log) => pickProvider(git.remoteUrl).resolve(git, log),
+};
+
+/** Project the git context the PR provider needs out of the upstream
+ *  GitInfo. Pure function — no I/O, no state. */
+function prContextFromGit(git: GitInfo | null): PrGitContext | null {
+  if (!git) return null;
+  return {
+    repoRoot: git.repoRoot,
+    branch: git.branch,
+    remoteUrl: git.remoteUrl,
+  };
+}
+
 function startPrProvider(
   record: ProviderRecord,
   terminalId: TerminalId,
@@ -260,26 +291,8 @@ function startPrProvider(
 ): () => void {
   const plog = log.child({ provider: "pr", terminal: terminalId });
   plog.debug("started");
-  // Forge dispatch: detectForge classifies the remote URL, the registry
-  // picks the adapter. Unknown forges fall through to the gh adapter
-  // (gh handles GHE; after phase 0a it degrades to silent absent on
-  // hosts it doesn't know).
-  const registry: Record<ForgeKind, PrProvider<PrUnavailableSource>> = {
-    github: githubPrProvider as PrProvider<PrUnavailableSource>,
-    forgejo: forgejoPrProvider as PrProvider<PrUnavailableSource>,
-  };
-  const compositeProvider: PrProvider<PrUnavailableSource> = {
-    kind: "composite",
-    async resolve(
-      git: PrGitContext,
-      log?: import("kolu-shared").Logger,
-    ): Promise<PrResult<PrUnavailableSource>> {
-      const forge = detectForge(git.remoteUrl ?? null);
-      return registry[forge].resolve(git, log);
-    },
-  };
   const watcher = subscribePr(
-    compositeProvider,
+    PR_PROVIDER,
     (pr) => {
       hooks.updateServerLiveMetadata(record, (m) => {
         m.pr = pr;
@@ -299,16 +312,7 @@ function startPrProvider(
     plog,
   );
   const cleanup = channels.git.consume({
-    onEvent: (git) =>
-      watcher.setGit(
-        git
-          ? {
-              repoRoot: git.repoRoot,
-              branch: git.branch,
-              remoteUrl: git.remoteUrl,
-            }
-          : null,
-      ),
+    onEvent: (git) => watcher.setGit(prContextFromGit(git)),
     onError: (err) => plog.error({ err }, "publisher subscription failed"),
   });
   return () => {

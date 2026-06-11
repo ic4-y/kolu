@@ -45,7 +45,7 @@ function gitContextEqual(
   return (
     a.repoRoot === b.repoRoot &&
     a.branch === b.branch &&
-    (a.remoteUrl ?? null) === (b.remoteUrl ?? null)
+    a.remoteUrl === b.remoteUrl
   );
 }
 
