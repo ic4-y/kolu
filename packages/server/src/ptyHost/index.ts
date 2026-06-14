@@ -34,6 +34,7 @@ import { cleanEnv, koluIdentityEnv, prepareShellInit } from "kolu-pty";
 import pkg from "../../package.json" with { type: "json" };
 import { log } from "../log.ts";
 import { connectKaval } from "./connect.ts";
+import { setLocalSocketPath } from "./daemonStatus.ts";
 import {
   kavalGatePath,
   kavalSocketPath,
@@ -104,13 +105,6 @@ function makeForwardingClient(getRoot: () => PtyHostClient): PtyHostClient {
  *  stable facade over the endpoint's current daemon connection. */
 export const ptyHostClient: PtyHostClient = makeForwardingClient(liveClient);
 
-/** The connected daemon's self-declared identity (staleKey + navigableCommit),
- *  or undefined before connect / while down. Read at the surface's `buildInfo`
- *  time for the rail's commit + closure-hash column. */
-export function currentPtyHostIdentity(): PtyHostIdentity | undefined {
-  return endpoint?.current()?.identity;
-}
-
 /** Boot the local pty-host endpoint under the always-recycle policy and connect.
  *  Resolves whether or not the daemon came up — a boot failure reports `dead`
  *  via `onStatus` and leaves `ptyHostClient` throwing, so the server can still
@@ -128,6 +122,9 @@ export async function ensureLocalEndpoint(opts: {
   onAdopted?: () => Promise<void>;
 }): Promise<void> {
   const socketPath = kavalSocketPath(opts.port);
+  // Surface where this kaval listens, so the dialog can show it (and `kaval-tui`
+  // users can target it explicitly). Set before the endpoint's first status emit.
+  setLocalSocketPath(socketPath);
   const ep = createEndpoint<PtyHostClient, Identity>({
     hostId: LOCAL_HOST_ID,
     gatePath: kavalGatePath(socketPath),
