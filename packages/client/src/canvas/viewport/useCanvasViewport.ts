@@ -14,11 +14,13 @@ import {
 } from "./coordinates";
 import { installGestures } from "./gestures";
 import {
+  accumulateZoom,
+  applyGestureBatch,
   computeCenterPan,
+  type GestureBatch,
   normalizeDelta as normalizeDeltaPure,
   snapToGrid as snapToGridPure,
   zoomToCenter as zoomToCenterPure,
-  zoomTowardPoint,
 } from "./transforms";
 
 // ── Singleton state ──
@@ -38,6 +40,73 @@ let currentAnim: AbortController | null = null;
 function cancelPanAnimation() {
   currentAnim?.abort();
   currentAnim = null;
+}
+
+// ── rAF-coalesced gesture application ──
+//
+// Wheel events arrive at ~166/s — several per animation frame. Writing
+// panX/panY/zoom on *every* event makes every mounted tile recompute its
+// transform per event, even though only the last state before the next paint is
+// ever shown. #1308 measured that write-storm (a zoom fling = 9,600 tile writes)
+// and under a throttled CPU it dropped frames — p99 past 33ms, 148 dropped
+// frames at 6× (docs/perf-investigations/canvas-gesture-p99.md). We accumulate
+// the frame's pan delta (sum) and zoom (a per-event-clamped running factor,
+// toward the last anchor) and apply them ONCE per rAF. For a pure-pan or
+// pure-zoom frame — and a wheel event is pan XOR zoom, so a gesture is
+// overwhelmingly one — the per-frame state is identical to the per-event path
+// (`applyGestureBatch` telescopes the math, `accumulateZoom` clamps per event),
+// so feel is unchanged. A frame that mixes both is a bounded, non-accumulating
+// approximation (see `applyGestureBatch`). The per-event hot path mutates fields
+// of the existing `pending` batch (zero allocation); the single `{ ...EMPTY }`
+// clone happens only per-frame/per-discard.
+const EMPTY: GestureBatch = {
+  panDx: 0,
+  panDy: 0,
+  zoomFactor: 1,
+  zoomAnchorX: 0,
+  zoomAnchorY: 0,
+};
+let pending: GestureBatch = { ...EMPTY };
+// Viewport zoom at the moment this frame's zoom accumulation began. Captured
+// once per batch (when `pending.zoomFactor` is still 1) so per-event clamping
+// in `accumulateZoom` is anchored to the same start the per-event path saw.
+let zoomStart = 1;
+let gestureRaf = 0;
+
+function scheduleGestureFlush() {
+  if (gestureRaf) return;
+  gestureRaf = requestAnimationFrame(flushGesture);
+}
+
+function flushGesture() {
+  gestureRaf = 0;
+  const result = applyGestureBatch(panX(), panY(), zoom(), pending);
+  pending = { ...EMPTY };
+  // Equal-value writes are no-ops (SolidJS skips on Object.is), so a pure-pan
+  // frame never notifies zoom dependents and vice versa.
+  setPanX(result.panX);
+  setPanY(result.panY);
+  setZoom(result.zoom);
+}
+
+/** Drop any queued gesture delta — a programmatic absolute pan/zoom (or a
+ *  container swap) is the new truth, so a frame-late fling delta must not land
+ *  on top of it. */
+function discardPendingGesture() {
+  if (gestureRaf) {
+    cancelAnimationFrame(gestureRaf);
+    gestureRaf = 0;
+  }
+  pending = { ...EMPTY };
+}
+
+/** Begin an authoritative absolute mutation: a programmatic write is the new
+ *  truth, so it must kill BOTH competing input sources — the in-flight tween
+ *  and the queued gesture delta. Every programmatic setter plugs into this one
+ *  seam so it cannot forget half the arbitration. */
+function beginAuthoritativeMutation() {
+  cancelPanAnimation();
+  discardPendingGesture();
 }
 
 // ── Public API ──
@@ -88,22 +157,29 @@ function setContainerRef(
   shouldYieldWheel?: (e: WheelEvent) => boolean,
 ) {
   cleanupGestures?.();
+  discardPendingGesture();
   containerEl = el;
   cleanupGestures = installGestures(
     el,
     {
+      // Accumulate per-event; `flushGesture` applies the frame's batch once.
+      // `cancelPanAnimation` stays synchronous so a wheel still interrupts an
+      // in-flight tween on the very first event, not a frame later.
       onPan: (dx, dy) => {
         cancelPanAnimation();
-        const z = zoom();
-        setPanX(panX() + dx / z);
-        setPanY(panY() + dy / z);
+        pending.panDx += dx;
+        pending.panDy += dy;
+        scheduleGestureFlush();
       },
       onZoom: (factor, sx, sy) => {
         cancelPanAnimation();
-        const result = zoomTowardPoint(panX(), panY(), zoom(), factor, sx, sy);
-        setPanX(result.panX);
-        setPanY(result.panY);
-        setZoom(result.zoom);
+        // First zoom contribution of this frame: anchor the running clamped
+        // zoom to the live signal so per-event clamping matches the old path.
+        if (pending.zoomFactor === 1) zoomStart = zoom();
+        accumulateZoom(pending, zoomStart, factor);
+        pending.zoomAnchorX = sx;
+        pending.zoomAnchorY = sy;
+        scheduleGestureFlush();
       },
     },
     shouldYieldWheel,
@@ -146,7 +222,7 @@ function targetForPoint(
 }
 
 function startAnimatedPan(target: { panX: number; panY: number }) {
-  cancelPanAnimation();
+  beginAuthoritativeMutation();
   currentAnim = animatePan(
     { x: panX(), y: panY() },
     { x: target.panX, y: target.panY },
@@ -168,7 +244,7 @@ function panTo(x: number, y: number) {
 }
 
 function setPan(x: number, y: number) {
-  cancelPanAnimation();
+  beginAuthoritativeMutation();
   setPanX(x);
   setPanY(y);
 }
@@ -184,7 +260,7 @@ function viewportSize() {
 
 function applyZoomToCenter(direction: "in" | "out" | "reset") {
   if (!containerEl) return;
-  cancelPanAnimation();
+  beginAuthoritativeMutation();
   const result = zoomToCenterPure(
     panX(),
     panY(),
