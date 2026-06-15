@@ -10,6 +10,7 @@ import {
   DEFAULT_TILE_H,
   DEFAULT_TILE_W,
   findFreeTilePosition,
+  resolveReferenceLayout,
 } from "./tilePlacement";
 import type { TileLayout } from "./TileLayout";
 
@@ -89,5 +90,48 @@ describe("findFreeTilePosition", () => {
       expect(result.w).toBe(DEFAULT_TILE_W);
       expect(result.h).toBe(DEFAULT_TILE_H);
     });
+  });
+});
+
+describe("resolveReferenceLayout", () => {
+  function makeLayoutOf(
+    map: Record<string, TileLayout | undefined>,
+  ): (id: string) => TileLayout | undefined {
+    return (id) => map[id];
+  }
+
+  it("returns active tile's layout when it has one", () => {
+    const layoutA = tile(100, 200, 800, 600);
+    const layoutOf = makeLayoutOf({ a: layoutA });
+    expect(resolveReferenceLayout("a", ["a"], layoutOf)).toBe(layoutA);
+  });
+
+  it("falls back to last existing tile when active tile is new (no layout)", () => {
+    const layoutA = tile(100, 200, 800, 600);
+    const layoutOf = makeLayoutOf({ a: layoutA, b: undefined });
+    const result = resolveReferenceLayout("b", ["a", "b"], layoutOf);
+    expect(result).toBe(layoutA);
+  });
+
+  it("returns undefined when active tile is new and no other tiles exist", () => {
+    const layoutOf = makeLayoutOf({ b: undefined });
+    expect(resolveReferenceLayout("b", ["b"], layoutOf)).toBeUndefined();
+  });
+
+  it("returns undefined when activeId is null", () => {
+    const layoutA = tile(100, 200, 800, 600);
+    const layoutOf = makeLayoutOf({ a: layoutA });
+    expect(resolveReferenceLayout(null, ["a"], layoutOf)).toBeUndefined();
+  });
+
+  it("skips new tiles without layouts when walking backwards", () => {
+    const layoutA = tile(0, 0, 400, 300);
+    const layoutOf = makeLayoutOf({
+      a: layoutA,
+      b: undefined,
+      c: undefined,
+    });
+    const result = resolveReferenceLayout("c", ["a", "b", "c"], layoutOf);
+    expect(result).toBe(layoutA);
   });
 });

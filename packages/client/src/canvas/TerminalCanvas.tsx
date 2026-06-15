@@ -45,7 +45,7 @@ import CanvasWatermark from "./CanvasWatermark";
 import Dock from "./dock/Dock";
 import { applyResize, type ResizeDirection } from "./resizeGeometry";
 import type { TileLayout } from "./TileLayout";
-import { findFreeTilePosition } from "./tilePlacement";
+import { findFreeTilePosition, resolveReferenceLayout } from "./tilePlacement";
 import { useCanvasFocus } from "./useCanvasFocus";
 import { usePendingLayouts } from "./usePendingLayouts";
 import { useTileTheme } from "./useTileTheme";
@@ -173,7 +173,7 @@ const TerminalCanvas: Component<{
         const cx = viewport.panX() + width / (2 * zoom);
         const cy = viewport.panY() + height / (2 * zoom);
         const activeId = store.activeId();
-        const referenceLayout = activeId ? layoutOf(activeId) : undefined;
+        const referenceLayout = resolveReferenceLayout(activeId, ids, layoutOf);
         const placed: {
           id: TileId;
           layout: TileLayout;

@@ -101,6 +101,33 @@ function placeAtViewportCenter(
   return { x: baseX, y: baseY, w: DEFAULT_TILE_W, h: DEFAULT_TILE_H };
 }
 
+/** Resolve the reference layout for a new tile's placement. The active
+ *  tile's layout is the natural reference — but at create time, the
+ *  canvas effect fires after `setActiveSilently(newId)`, so the active
+ *  tile is the one being placed (no layout yet). In that case, fall
+ *  back to the last existing tile in `tileIds` that has a layout —
+ *  that's the tile the user was focused on before creating the new one.
+ *
+ *  Pure function so the reference-resolution logic can be unit-tested
+ *  without the reactive canvas effect. */
+export function resolveReferenceLayout(
+  activeId: string | null,
+  tileIds: ReadonlyArray<string>,
+  layoutOf: (id: string) => TileLayout | undefined,
+): TileLayout | undefined {
+  if (!activeId) return undefined;
+  const activeLayout = layoutOf(activeId);
+  if (activeLayout) return activeLayout;
+  for (let i = tileIds.length - 1; i >= 0; i--) {
+    const id = tileIds[i];
+    if (id && id !== activeId) {
+      const l = layoutOf(id);
+      if (l) return l;
+    }
+  }
+  return undefined;
+}
+
 function rectsOverlap(
   a: { x: number; y: number; w: number; h: number },
   b: { x: number; y: number; w: number; h: number },
