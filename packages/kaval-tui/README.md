@@ -86,6 +86,39 @@ kolu. One daemon running → it's picked automatically. More than one → kaval-
 lists them and asks you to choose with `--socket <path>` (which goes **after**
 the subcommand: `kaval-tui list --socket …`).
 
+## Reaching a remote kaval — `--host`
+
+`--host <ssh>` drives a kaval on **another machine** over ssh. There's nothing
+to install first: kaval-tui **provisions** the daemon with Nix (`nix copy
+--derivation` ships the right-arch closure, the remote realises it), runs
+`kaval --stdio`, and dials it — the same `ptyHostSurface` client, just over ssh
+stdio instead of a local socket. Every subcommand works unchanged:
+
+```sh
+kaval-tui create --host nix@prod              # spawn a shell ON prod
+kaval-tui list   --host nix@prod              # …and a separate invocation
+kaval-tui attach --host nix@prod <id>         #    finds it: the PTY survived
+```
+
+The remote daemon is **durable**: `--stdio` adopts a kaval already running on
+the host (else starts one), so a terminal you `create` outlives the ssh link —
+detach on the train, `attach` again at the café and your build is still
+running. One kaval per host, shared across dials.
+
+A remote terminal runs in the **host's** environment, not yours. A remote
+`create` composes its spawn from the daemon's `system.info`: `$SHELL`, `$HOME`,
+and `$PATH` are the **remote** machine's (so the shell finds the remote's own
+commands — a shell with no `$PATH` would exit `127` on the first one), and only
+your terminal's _presentation_ vars (`TERM`, `COLORTERM`, `LANG`/`LC_*`) are
+carried across. Your local environment — and any secrets in it — never crosses
+the wire. (A _local_ `create` ships your own env, since the daemon is on your
+machine; the remote path deliberately does not.)
+
+`--host` is mutually exclusive with `--socket` (a remote ssh target vs a local
+path). It needs passwordless ssh and the remote's nix-daemon trusting your user
+(`trusted-users`) to accept the copied closure. Run kaval-tui from its Nix
+wrapper (`nix run …#kaval-tui`) — the per-arch derivations are baked in there.
+
 ## Attach — the ssh model
 
 While attached, nothing is intercepted except a `~` typed at the **start of a

@@ -15,10 +15,15 @@
  * resolved against the live inventory client-side (see `resolveOne`), so a
  * pasted full uuid keeps working. `--json` always carries the full id.
  *
- * By default it reaches a standalone `kaval` daemon. To drive a running
- * kolu-server's in-process terminals instead (until B2 flips kolu onto the
- * daemon), point `--socket` at kolu's socket
- * (`$XDG_RUNTIME_DIR/kolu/pty-host.sock`).
+ * By default it reaches a standalone `kaval` daemon on THIS machine. Two ways to
+ * point it elsewhere, mutually exclusive:
+ *   --socket PATH   a different LOCAL socket — e.g. a running kolu-server's
+ *                   in-process terminals (`$XDG_RUNTIME_DIR/kolu/pty-host.sock`).
+ *   --host <ssh>    a REMOTE kaval over ssh (R-2): provision the daemon's
+ *                   closure with Nix, run `kaval --stdio`, and dial it — the
+ *                   same client over a different transport (see `hostConnect.ts`).
+ *                   A remote PTY survives the link: `create` on prod, then a
+ *                   later `attach` finds it.
  *
  * `kill` is a later phase. The CLI comes and goes; the daemon keeps owning the
  * PTYs — `create` mints one, the daemon holds it until something kills it.
@@ -33,15 +38,23 @@ import {
   getPtyHostSocketPath,
   KAVAL_NS_PREFIX,
   PTY_HOST_CONTRACT_VERSION,
+  type PtyHostSpawnInput,
 } from "kaval";
 import { type AttachTty, runAttach } from "./attach.ts";
 import { type Connection, connectPtyHost } from "./connect.ts";
-import { buildCreateInput, formatCreate, newPtyId } from "./create.ts";
+import {
+  buildCreateInput,
+  buildRemoteCreateInput,
+  formatCreate,
+  newPtyId,
+} from "./create.ts";
 import { isValidEscapeChar } from "./escape.ts";
+import { connectPtyHostViaHost } from "./hostConnect.ts";
 import {
   formatList,
   formatListJson,
   resolveTerminalId,
+  shellQuoteArg,
   shortId,
 } from "./render.ts";
 
@@ -56,19 +69,56 @@ const socketFlag = {
   },
 } as const;
 
+// --host reaches a REMOTE kaval over ssh, provisioning it with Nix. Mutually
+// exclusive with --socket (a local path); the conflict is rejected in main().
+const hostFlag = {
+  host: {
+    type: String,
+    description:
+      "reach a kaval on a remote machine over ssh, provisioning it via Nix — e.g. --host nix@prod. The remote PTYs survive the link (create on the host, attach to it later). Mutually exclusive with --socket. Goes AFTER the subcommand.",
+  },
+} as const;
+
+// Every subcommand can target either a local socket or a remote host.
+const endpointFlags = { ...socketFlag, ...hostFlag } as const;
+
+/** The endpoint a command resolved to — which daemon it dialed. Carried into
+ *  `create` so a remote `create` composes against the host's facts (not local
+ *  ones) and so the printed "attach with …" hint names the SAME endpoint: a
+ *  remote PTY is reachable only with `--host`, and an explicit `--socket` may
+ *  not be what bare-`attach` autodiscovery would pick. */
+type Endpoint =
+  | { kind: "host"; host: string }
+  | { kind: "socket"; socket: string }
+  | { kind: "default" };
+
+/** The flag suffix that re-targets a later command at the SAME endpoint — the
+ *  empty string for the default discovered socket (bare `attach` finds it). The
+ *  value is shell-quoted: the hint is printed for copy-paste back into a shell,
+ *  and a socket path may legitimately carry spaces (`/tmp/my sock`) that would
+ *  otherwise re-split into two args (the pasted command targets the wrong thing)
+ *  — see `shellQuoteArg`. */
+function endpointHint(endpoint: Endpoint): string {
+  if (endpoint.kind === "host")
+    return ` --host ${shellQuoteArg(endpoint.host)}`;
+  if (endpoint.kind === "socket")
+    return ` --socket ${shellQuoteArg(endpoint.socket)}`;
+  return "";
+}
+
 const argv = cli({
   name: "kaval-tui",
   version: PTY_HOST_CONTRACT_VERSION,
   help: {
     description:
-      "A terminal-side client for the kaval PTY daemon (beta). Connects to a running kaval over a local unix socket — start it with `kaval`; the socket appears once it boots. Use `--socket` to reach a kolu-server's in-process terminals instead. `kill` lands later.",
+      "A terminal-side client for the kaval PTY daemon (beta). Connects to a running kaval over a local unix socket — start it with `kaval`; the socket appears once it boots. Use `--socket` to reach a kolu-server's in-process terminals, or `--host <ssh>` to provision and dial a kaval on a remote machine. `kill` lands later.",
   },
   commands: [
     command({
       name: "list",
       help: { description: "List your live terminals." },
       flags: {
-        ...socketFlag,
+        ...endpointFlags,
         json: {
           type: Boolean,
           description: "machine-readable JSON output (a top-level array)",
@@ -84,7 +134,7 @@ const argv = cli({
           "Spawn a new terminal and print its id; the daemon owns it. Runs a plain $SHELL by default, or the command you pass — prefix it with `--` when it takes its own flags: `kaval-tui create -- htop -d 5`. Then `kaval-tui attach <id>` to take it over.",
       },
       flags: {
-        ...socketFlag,
+        ...endpointFlags,
         json: {
           type: Boolean,
           description: "machine-readable JSON output ({ id, pid, cwd })",
@@ -99,7 +149,7 @@ const argv = cli({
         description:
           "Print a terminal's current rendered scrollback. <id> is the short id from `list` or any unique prefix.",
       },
-      flags: { ...socketFlag },
+      flags: { ...endpointFlags },
     }),
     command({
       name: "attach",
@@ -109,7 +159,7 @@ const argv = cli({
           "Take over a terminal: raw passthrough until a line-start `~.` detaches (the daemon keeps the terminal). `~?` lists the escapes. <id> is the short id from `list` or any unique prefix.",
       },
       flags: {
-        ...socketFlag,
+        ...endpointFlags,
         escape: {
           type: String,
           description:
@@ -222,19 +272,37 @@ async function cmdSnapshot(conn: Connection, id: string): Promise<void> {
 
 async function cmdCreate(
   conn: Connection,
+  endpoint: Endpoint,
   command: readonly string[],
   json: boolean,
 ): Promise<void> {
   // Compose the WHOLE fully-specified input client-side (the host derives
-  // nothing since B0): a plain `$SHELL` (or the given `command`), our own
-  // cwd/env, no rcfiles. We mint the id so the returned `id` echoes ours — the
-  // same way kolu-server does.
-  const input = buildCreateInput({
-    id: newPtyId(),
-    cwd: process.cwd(),
-    env: process.env,
-    command,
-  });
+  // nothing since B0). We mint the id so the returned `id` echoes ours — the
+  // same way kolu-server does. WHERE the facts come from depends on the
+  // endpoint: a LOCAL daemon runs on THIS machine, so our own cwd/env/$SHELL
+  // are its facts; a REMOTE one (`--host`) runs elsewhere, so we read its
+  // `system.info` (shell/home) and ship a host-derived, minimal env rather than
+  // a local cwd that may not exist there or a wholesale local `process.env`.
+  let input: PtyHostSpawnInput;
+  let home: string;
+  if (endpoint.kind === "host") {
+    const info = await conn.client.surface.system.info({});
+    input = buildRemoteCreateInput({
+      id: newPtyId(),
+      host: { shell: info.shell, home: info.home, path: info.path },
+      localEnv: process.env,
+      command,
+    });
+    home = info.home;
+  } else {
+    input = buildCreateInput({
+      id: newPtyId(),
+      cwd: process.cwd(),
+      env: process.env,
+      command,
+    });
+    home = homedir();
+  }
   const result = await conn.client.surface.terminal.spawn(input);
   if (json) {
     // The raw { id, pid, cwd }, 2-space indented like `list --json`, with the
@@ -244,11 +312,13 @@ async function cmdCreate(
     return;
   }
   const program = input.argv[0] ?? "";
-  await writeOut(`${formatCreate(result, { program, home: homedir() })}\n`);
+  await writeOut(`${formatCreate(result, { program, home })}\n`);
   // Next-step hint to stderr (stdout stays just the spawn line) — `create` is
-  // the prerequisite for `attach`, so name the exact command to take it over.
+  // the prerequisite for `attach`, so name the exact command to take it over,
+  // carrying the SAME endpoint: a remote PTY is reached only with `--host`, and
+  // an explicit `--socket` may not be the one autodiscovery would pick.
   process.stderr.write(
-    `— attach with \`kaval-tui attach ${shortId(result.id)}\`\n`,
+    `— attach with \`kaval-tui attach ${shortId(result.id)}${endpointHint(endpoint)}\`\n`,
   );
 }
 
@@ -373,6 +443,35 @@ async function assertCompatible(conn: Connection): Promise<void> {
   }
 }
 
+/** Dial a LOCAL kaval (or kolu-server) over its unix socket — an explicit
+ *  `--socket`, else the discovered/default one. Fails loud with an actionable
+ *  hint if nothing is listening. */
+function connectLocal(socketOverride: string | undefined): Promise<Connection> {
+  const kavalDefault = getPtyHostSocketPath(undefined, KAVAL_NS_PREFIX);
+  const socketPath = resolveSocketPath(socketOverride, kavalDefault);
+  return connectPtyHost(socketPath).catch((err) => {
+    const code = (err as NodeJS.ErrnoException).code;
+    // The kolu-server hint names the SAME path kolu computes — and the
+    // $XDG_RUNTIME_DIR-unset fallback (e.g. over ssh), the exact case where a
+    // hand-built `$XDG_RUNTIME_DIR/kolu/...` collapses to a wrong `/kolu/...`.
+    const koluSock = getPtyHostSocketPath(undefined, "kolu");
+    return fail(
+      `no socket at ${socketPath}${code ? ` (${code})` : ""} — is kaval running? Start it with \`kaval\`; the socket appears once it boots. To reach a running kolu-server instead, point at its socket: \`--socket ${koluSock}\`.`,
+    );
+  });
+}
+
+/** Reach a REMOTE kaval over ssh (`--host`): provision the daemon with Nix and
+ *  dial it. Fails loud with the underlying ssh/nix error so a misconfigured host
+ *  (no passwordless ssh, the user not in the remote's `trusted-users`) reads as
+ *  actionable rather than an opaque hang — the CLI is one-shot, so it surfaces
+ *  the first failure instead of spinning on HostSession's reconnect loop. */
+function connectHost(host: string): Promise<Connection> {
+  return connectPtyHostViaHost(host).catch((err) =>
+    fail(`could not reach kaval on ${host} — ${(err as Error).message}`),
+  );
+}
+
 async function main(): Promise<void> {
   // cleye already handled --help / --version (it prints and exits). We land here
   // with no command in two cases: bare `kaval-tui` (no args → show help), or the
@@ -390,20 +489,28 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // The bare-kaval default we dial when discovery finds no daemon — bound once
-  // so the path the resolver falls through to is the same value by construction.
-  const kavalDefault = getPtyHostSocketPath(undefined, KAVAL_NS_PREFIX);
-  const socketPath = resolveSocketPath(argv.flags.socket, kavalDefault);
-  const conn = await connectPtyHost(socketPath).catch((err) => {
-    const code = (err as NodeJS.ErrnoException).code;
-    // The kolu-server hint names the SAME path kolu computes — and the
-    // $XDG_RUNTIME_DIR-unset fallback (e.g. over ssh), the exact case where a
-    // hand-built `$XDG_RUNTIME_DIR/kolu/...` collapses to a wrong `/kolu/...`.
-    const koluSock = getPtyHostSocketPath(undefined, "kolu");
-    return fail(
-      `no socket at ${socketPath}${code ? ` (${code})` : ""} — is kaval running? Start it with \`kaval\`; the socket appears once it boots. To reach a running kolu-server instead, point at its socket: \`--socket ${koluSock}\`.`,
+  // Pick the transport: --host reaches a remote kaval over ssh; otherwise dial a
+  // local socket. They name two different daemons (an ssh target vs a path), so
+  // passing both is a usage error rather than a precedence puzzle.
+  if (argv.flags.host !== undefined && argv.flags.socket !== undefined) {
+    fail(
+      "--host and --socket are mutually exclusive: --host reaches a remote kaval over ssh, --socket dials a local one. Pass just one.",
     );
-  });
+  }
+  // The endpoint this command targets — its transport AND the suffix that
+  // re-targets a later `attach` at the same daemon (see `endpointHint`).
+  const endpoint: Endpoint =
+    argv.flags.host !== undefined
+      ? { kind: "host", host: argv.flags.host }
+      : argv.flags.socket !== undefined
+        ? { kind: "socket", socket: argv.flags.socket }
+        : { kind: "default" };
+  const conn =
+    endpoint.kind === "host"
+      ? await connectHost(endpoint.host)
+      : await connectLocal(
+          endpoint.kind === "socket" ? endpoint.socket : undefined,
+        );
 
   try {
     await assertCompatible(conn);
@@ -413,7 +520,7 @@ async function main(): Promise<void> {
     // exits on commands not in its registry; this guards OUR omissions.)
     if (argv.command === "list") await cmdList(conn, argv.flags.json);
     else if (argv.command === "create")
-      await cmdCreate(conn, argv._.command, argv.flags.json);
+      await cmdCreate(conn, endpoint, argv._.command, argv.flags.json);
     else if (argv.command === "snapshot")
       await cmdSnapshot(conn, await resolveOne(conn, argv._.id));
     else if (argv.command === "attach")
