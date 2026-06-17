@@ -10,10 +10,10 @@ Feature: New terminal inherits active terminal's size
 
   Scenario: New terminal inherits active terminal's size, not last terminal's
     # Background auto-creates terminal 0 (default size).
-    # Create terminal 1 and 2 explicitly.
-    # Resize terminal 1 to non-default. Focus terminal 1. Create terminal 3.
-    # Terminal 3 must have terminal 1's size (the active tile), not
-    # terminal 2's size (the last-created tile).
+    # Create terminal 1 (active, default size) and terminal 2 (active, default size).
+    # Resize terminal 1 to non-default. Click terminal 1 to make it active.
+    # Create terminal 3. Terminal 3 must have terminal 1's size (the active tile),
+    # not terminal 2's size (the last-created tile).
     Given I create a terminal
     And I create a terminal
     When I resize created terminal 1 to width 1000 and height 700
@@ -25,11 +25,12 @@ Feature: New terminal inherits active terminal's size
 
   Scenario: Successive creates chain the inherited size
     # Background auto-creates terminal 0 (default size).
-    # Create terminal 1 explicitly. Resize it. Create terminal 2.
+    # Create terminal 1 (active, default size). Resize it. Create terminal 2.
     # Terminal 2 inherits terminal 1's resized size.
+    # Note: After creating terminal 1, it's active. Resize doesn't change active.
+    # So when we create terminal 2, terminal 1 is still active.
     Given I create a terminal
     When I resize created terminal 1 to width 1100 and height 600
-    And I click created terminal 1
     And I create a terminal
     Then created terminal 2 should have width 1100 and height 600
     And there should be no page errors
