@@ -45,7 +45,12 @@ import CanvasWatermark from "./CanvasWatermark";
 import Dock from "./dock/Dock";
 import { applyResize, type ResizeDirection } from "./resizeGeometry";
 import type { TileLayout } from "./TileLayout";
-import { findFreeTilePosition, resolveReferenceLayout } from "./tilePlacement";
+import { consumeInheritSize } from "./inheritSize";
+import {
+  DEFAULT_TILE_H,
+  DEFAULT_TILE_W,
+  findFreeTilePosition,
+} from "./tilePlacement";
 import { useCanvasFocus } from "./useCanvasFocus";
 import { usePendingLayouts } from "./usePendingLayouts";
 import { useTileTheme } from "./useTileTheme";
@@ -172,8 +177,7 @@ const TerminalCanvas: Component<{
         const zoom = viewport.zoom();
         const cx = viewport.panX() + width / (2 * zoom);
         const cy = viewport.panY() + height / (2 * zoom);
-        const activeId = store.activeId();
-        const referenceLayout = resolveReferenceLayout(activeId, ids, layoutOf);
+        const inheritSize = consumeInheritSize();
         const placed: {
           id: TileId;
           layout: TileLayout;
@@ -185,12 +189,15 @@ const TerminalCanvas: Component<{
             placed.push({ id, layout: existing, isNew: false });
             continue;
           }
-          const defaultLayout: TileLayout = findFreeTilePosition(
-            referenceLayout,
-            placed.map((p) => p.layout),
-            cx,
-            cy,
-          );
+          const defaultLayout: TileLayout = {
+            ...findFreeTilePosition(
+              cx,
+              cy,
+              placed.map((p) => p.layout),
+            ),
+            w: inheritSize?.w ?? DEFAULT_TILE_W,
+            h: inheritSize?.h ?? DEFAULT_TILE_H,
+          };
           setPendingLayout(id, defaultLayout);
           props.onLayoutChange(id, defaultLayout);
           placed.push({ id, layout: defaultLayout, isNew: true });
@@ -201,7 +208,7 @@ const TerminalCanvas: Component<{
         // job here is bumping the centering signal once the new tile's
         // pending layout exists. Same mechanism the `focus.request`
         // effect below uses for every other system-driven activation.
-
+        const activeId = store.activeId();
         if (activeId && placed.some((p) => p.isNew && p.id === activeId)) {
           tileStore.activate(activeId);
         }

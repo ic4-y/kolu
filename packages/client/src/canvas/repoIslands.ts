@@ -20,7 +20,6 @@
 
 import type { TerminalId } from "kolu-common/surface";
 import type { TileLayout } from "./TileLayout";
-import { CANVAS_TILE_GAP } from "./tilePlacement";
 import { GRID_SIZE } from "./viewport/transforms";
 
 /** Tile input for the layout. `bucket` is the clustering key the caller
@@ -36,6 +35,7 @@ export type RepoIslandTile = {
 // 960 px — comfortably wider than a default tile so repo islands read
 // as separate clusters on the canvas, not as one wider grid.
 const CLUSTER_GAP = GRID_SIZE * 40;
+const TILE_GAP = GRID_SIZE;
 
 /** Return desired layouts for every tile, packing same-bucket into
  *  square-ish clusters and packing clusters across the canvas. Each
@@ -82,7 +82,7 @@ function packCluster(tiles: RepoIslandTile[]): {
 } {
   const offsets = packGrid(
     tiles.map((t) => ({ w: t.layout.w, h: t.layout.h })),
-    CANVAS_TILE_GAP,
+    TILE_GAP,
   );
   const layouts = new Map<TerminalId, TileLayout>();
   let maxRight = 0;

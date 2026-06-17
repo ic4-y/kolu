@@ -15,6 +15,8 @@ import { useRightPanel } from "../right-panel/useRightPanel";
 import { CONTEXTUAL_TIPS } from "../settings/tips";
 import { useTips } from "../settings/useTips";
 import { writeTextToClipboard } from "../ui/clipboard";
+import { setInheritSize } from "../canvas/inheritSize";
+import { refuseIfWarming } from "../kaval/useDaemonStatus";
 import { client, preferences } from "../wire";
 import { useSubPanel } from "./useSubPanel";
 import { useTerminalSearch } from "./useTerminalSearch";
@@ -144,6 +146,11 @@ export const useTerminalCrud = createSharedRoot(() => {
         toast.error(`Failed to create terminal: ${err.message}`);
         throw err;
       });
+    // Inherit the active tile's size for the new terminal. Read BEFORE
+    // `setActiveSilently` — after that call, `activeId` is the new tile
+    // (which has no layout yet), so we'd have nothing to inherit from.
+    const activeLayout = store.activeMeta()?.canvasLayout;
+    if (activeLayout) setInheritSize({ w: activeLayout.w, h: activeLayout.h });
     // `setActiveSilently`: the canvas's cascade-placement effect bumps
     // the centering signal once the new tile's pending layout is set —
     // calling `activate` here would race the layout and read undefined.
