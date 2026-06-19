@@ -16,20 +16,12 @@ import { useViewState } from "../useViewState";
 import { terminalListSub } from "../wire";
 import { useSubPanel } from "./useSubPanel";
 import { useTerminalMetadata } from "./useTerminalMetadata";
-
-/** How many tiles may hold a WebGL renderer at once. The WebGL and DOM
- *  renderers measure cell width differently (WebglRenderer floors
- *  `charW × dpr`, DomRenderer doesn't), so a tile that swaps between them
- *  reflows its text ~7.7% — jarring on every focus change (#1306; #1400's
- *  cause #1). Upstream won't make the metrics match (xtermjs/xterm.js#6015),
- *  so instead of eliminating the difference we avoid the *swap* that exposes
- *  it: keep WebGL on the 2 most-recently-active tiles rather than only the
- *  focused one. N=2 is the sweet spot — the reflow is most jarring when you
- *  ping-pong between two terminals, and with N=2 that A↔B toggle never crosses
- *  the WebGL↔DOM boundary. It also stays far under Chrome's ~16-contexts/tab
- *  cap (#575): ≤ 2 tiles × (main pane + active split) = 4 live contexts. See
- *  juspay/kolu#1403. */
-const WEBGL_TILE_BUDGET = 2;
+import {
+  admitWebglTiles,
+  isActiveSplit,
+  tileWebglCost,
+  WEBGL_CONTEXT_CAP,
+} from "./webglBudget";
 
 export const useTerminalStore = createSharedRoot(() => {
   const view = useViewState();
@@ -56,18 +48,26 @@ export const useTerminalStore = createSharedRoot(() => {
       : parentId;
   }
 
-  /** The tiles entitled to a WebGL context: the N most-recently-active *live*
-   *  tiles. Derived from the existing tile MRU (`mruOrder`) intersected with
-   *  the live top-level tiles, so a closed tile is dropped from the list rather
-   *  than pinning a budget slot — no explicit remove-on-close needed. Reactive,
-   *  so switching tiles loads/unloads WebGL on exactly the tiles that crossed
-   *  the budget boundary. */
+  /** The tiles entitled to a WebGL context: the most-recently-active *live*
+   *  tiles that fit under `WEBGL_CONTEXT_CAP`. Derived from the tile MRU
+   *  (`mruOrder`) intersected with the live top-level tiles, so a closed tile is
+   *  dropped rather than pinning a slot — no explicit remove-on-close needed.
+   *  Reactive, so switching tiles loads/unloads WebGL only on the tiles that
+   *  cross the cap boundary; when the whole working set fits, focus switches
+   *  churn nothing (the #1399 fix). */
   const webglTileBudget = createMemo(() => {
     const live = new Set(metadata.terminalIds());
-    return view
-      .mruOrder()
-      .filter((id) => live.has(id))
-      .slice(0, WEBGL_TILE_BUDGET);
+    const ordered = view.mruOrder().filter((id) => live.has(id));
+    // `tileWebglCost` is the one home for a tile's context cost (main pane + an
+    // expanded, active split), so the running count is the true number of live
+    // WebGL contexts — admitting the full working set churn-free (#1399) while
+    // staying under Chrome's per-tab limit (#575). `holdsWebgl` below maps the
+    // same split rule down to individual terminals via `isActiveSplit`.
+    return admitWebglTiles(
+      ordered,
+      (id) => tileWebglCost(subPanel.getSubPanel(id)),
+      WEBGL_CONTEXT_CAP,
+    );
   });
 
   /** Whether `id` should hold a WebGL renderer under the budget. A budgeted
@@ -85,12 +85,11 @@ export const useTerminalStore = createSharedRoot(() => {
     const parentId = metadata.getMetadata(id)?.parentId ?? null;
     if (parentId === null) return budget.includes(id);
     const panel = subPanel.getSubPanel(parentId);
-    // A collapsed split is invisible — it must not hold a WebGL context.
-    // Mirror focusedId's collapsed guard so holdsWebgl is self-contained and
-    // any future consumer doesn't need to re-check props.visible externally.
-    return (
-      budget.includes(parentId) && !panel.collapsed && panel.activeSubTab === id
-    );
+    // A budgeted tile's slot covers exactly its active split (a collapsed split
+    // is invisible and holds no context). `isActiveSplit` is the same predicate
+    // `tileWebglCost` builds the budget from, so this per-terminal grant and the
+    // budgeted count can't drift apart.
+    return budget.includes(parentId) && isActiveSplit(panel, id);
   }
 
   return {
