@@ -51,7 +51,7 @@ import {
   FileDiffIcon,
   GitBranchIcon,
 } from "../ui/Icons";
-import { resolveLineRefPath } from "../ui/lineRef";
+import { resolveRef } from "../ui/lineRef";
 import { mergeGitStatusEntries } from "../ui/gitStatusEntries";
 import { makeTreeContextMenu } from "../ui/pierreAdapters";
 import SegmentedControl, {
@@ -401,6 +401,11 @@ const CodeTab: Component<{
       slotKey,
       () => {
         setSearchQuery("");
+        // Retire any standing folder reveal too — it was scoped to the previous
+        // repo/view. Clearing here can't clobber a folder click that *causes*
+        // the view switch: that switch fires this effect while fsListAll is
+        // still loading, before the gated resolution effect sets `revealDir`.
+        setRevealDir(null);
       },
       { defer: true },
     ),
@@ -422,13 +427,27 @@ const CodeTab: Component<{
   // the full request object (reference identity discriminates two
   // structurally-identical clicks — `openInCodeTab` mints a fresh object per
   // call) alongside the resolved path. Storing the request here lets
-  // `selectedRange` derive its value without re-running `resolveLineRefPath`
+  // `selectedRange` derive its value without re-running `resolveRef`
   // (single resolution site per request). Reset by a manual tree-click to a
   // different file so navigating back doesn't resurrect the line range.
   const [handled, setHandled] = createSignal<{
     request: OpenInCodeTabRequest;
     resolvedPath: string | null;
   } | null>(null);
+
+  // Directory-reveal target for the terminal folder-link front door. A folder
+  // ref (`packages/client/`) isn't a selectable file, so instead of `select`ing
+  // it we hand the tree a "reveal this directory" request — expand it + its
+  // ancestors and scroll it into view, leaving the shown file untouched. The
+  // request **stands** (it is not consumed) so `FileTree` re-applies it on every
+  // remount: the live `fsListAll` stream resubscribes under load and briefly
+  // unmounts/remounts the tree, and a consume-once reveal was lost in that
+  // window (the folder came back collapsed — a darwin-CI flake). It is cleared
+  // on the next real navigation instead — a file pick (`handleSelect`) or a
+  // repo/view switch (the `slotKey` effect) — so it never re-scrolls to a stale
+  // folder forever. A fresh object per request re-fires the reveal on a repeat
+  // click of the same folder.
+  const [revealDir, setRevealDir] = createSignal<{ path: string } | null>(null);
 
   // Honor every `openInCodeTab` request — terminal file-ref clicks,
   // right-click "Open path:N" entries, and any future producer. The
@@ -455,18 +474,41 @@ const CodeTab: Component<{
         // settling) can't reprocess it, even after a manual tree-click has
         // reset `handled`.
         consumedRequest = req;
-        const rel = resolveLineRefPath({
+        const resolved = resolveRef({
           rawPath: req.ref.path,
           repoRoot: repo,
           cwd: req.cwd,
           repoPaths: paths,
           allowBasenameFallback: req.allowBasenameFallback,
+          // A `:N` line suffix means the user pointed at a *file* line — a
+          // directory match would wrongly reveal the folder and drop the line,
+          // so gate the folder-reveal step off when a line is present.
+          hasLine: req.ref.startLine !== null,
         });
-        if (rel === null) {
+        if (resolved === null) {
           toast.error(`File reference not found: ${req.ref.path}`);
           setHandled({ request: req, resolvedPath: null });
           return;
         }
+        if (resolved.kind === "directory") {
+          // A folder ref reveals (expands + scrolls to) the directory in the
+          // tree without changing the shown file — selection stays put, and
+          // the request leaves no line highlight, mirroring the not-found
+          // branch. The reveal isn't a content navigation, so it's not
+          // recorded in back/forward history.
+          //
+          // Resolution ran against the full `treePaths()`, but the mounted
+          // tree shows `treeSearch().projectedPaths` — a *filtered* set when a
+          // browse search is active. A folder outside the current filter has no
+          // row to reveal, so the request would be silently consumed with
+          // nothing on screen. Clear the search first: the projection falls
+          // back to the full tree, the target row exists, and the reveal lands.
+          setSearchQuery("");
+          setRevealDir({ path: resolved.path });
+          setHandled({ request: req, resolvedPath: null });
+          return;
+        }
+        const rel = resolved.path;
         // Record the front-door open in history *with* its line ref, so a
         // later back() re-issues it through this same pipeline and repaints
         // the highlight (cheap-v1 "restore where you were"). Idempotent on
@@ -594,6 +636,10 @@ const CodeTab: Component<{
     // the previous signal value through Pierre's internal churn lets the
     // selected file survive right-panel tab toggles (#818).
     if (path === null) return;
+    // A genuine file pick is a navigation away from any standing folder reveal,
+    // so retire it — otherwise its directory would keep re-expanding on every
+    // remount. (The picked file's own ancestors keep that folder open anyway.)
+    setRevealDir(null);
     // Tree-click to a different file ends the click-targeted-highlight
     // session — otherwise navigating back to the originally-targeted
     // file in the tree would resurrect the line range, surprising the
@@ -905,6 +951,11 @@ const CodeTab: Component<{
                       gitStatus={treeGitStatus()}
                       selectedPath={selectedPath()}
                       onSelect={handleSelect}
+                      // Terminal folder-link front door: a folder ref reveals
+                      // (expands + scrolls to) the directory here. The request
+                      // stands so a remount re-reveals it (`revealDir` above);
+                      // it's cleared on the next navigation, not on apply.
+                      revealRequest={revealDir()}
                       initialExpansion={isDiffView() ? "open" : "closed"}
                       search={false}
                       expandPaths={treeSearch().expandedAncestors}
