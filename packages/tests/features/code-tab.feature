@@ -713,10 +713,18 @@ Feature: Code tab (review + browse)
   # terminal's "back" button live (its history intact), not reset.
   Scenario: Code tab history survives switching between terminals in different repos
     When I run "rm -rf /tmp/kolu-hist-term-a && git init /tmp/kolu-hist-term-a && cd /tmp/kolu-hist-term-a"
-    And I run "printf 'one-A\n' > one.txt && printf 'two-A\n' > two.txt"
+    And I run "printf 'one-A\n' > one.txt && printf 'two-A\n' > two.txt && printf 'a\n' > only-in-a.txt"
     And I run "git add . && git commit -m init"
     And I click the Code tab
     And I click the Code tab mode "browse"
+    # Wait for this terminal's git to settle to repoA before recording history.
+    # A new terminal inherits the active terminal's cwd, so the git sensor's
+    # re-resolve after the `cd` lags (slow on darwin) while the file viewer's
+    # faster path already shows the right content; building history before the
+    # settle lets the settle's per-repo history reset wipe it (a flake).
+    # `only-in-a.txt` exists ONLY in repoA, so its tree row proves repoPath
+    # (metadata.git) has settled to repoA.
+    And the file browser should show a file "only-in-a.txt"
     When I click the file "one.txt" in the file browser
     Then the selected file should show content "one-A"
     When I click the file "two.txt" in the file browser
@@ -729,10 +737,15 @@ Feature: Code tab (review + browse)
     # which tab the terminal-1 interactions left active.
     When I create a terminal
     And I run "rm -rf /tmp/kolu-hist-term-b && git init /tmp/kolu-hist-term-b && cd /tmp/kolu-hist-term-b"
-    And I run "printf 'one-B\n' > one.txt && printf 'two-B\n' > two.txt"
+    And I run "printf 'one-B\n' > one.txt && printf 'two-B\n' > two.txt && printf 'b\n' > only-in-b.txt"
     And I run "git add . && git commit -m init"
     And I click the Code tab
     And I click the Code tab mode "browse"
+    # Settle wait (see terminal A above): only-in-b.txt is unique to repoB, so
+    # its tree row proves B's git re-resolved to repoB after the `cd` — building
+    # history before the settle lets the per-repo reset wipe it (the darwin flake
+    # this scenario hit: B inherits A's cwd = repoA, then cd's to repoB).
+    And the file browser should show a file "only-in-b.txt"
     When I click the file "one.txt" in the file browser
     Then the selected file should show content "one-B"
     When I click the file "two.txt" in the file browser
@@ -742,12 +755,25 @@ Feature: Code tab (review + browse)
     # back is still live and retraces A's own stack, not wiped by the reset.
     When I select workspace switcher entry 1
     Then the selected file should show content "two-A"
+    # Wait for A's repo view to RE-HYDRATE after the switch before checking the
+    # toolbar. The file viewer can paint A's *cached* content while repoPath() is
+    # still re-resolving (the toolbar not yet re-rendered); the tree row is gated
+    # on the repoPath-driven fsListAll, so it appears only once the view settles —
+    # the deterministic signal the back-button enablement actually needs. Without
+    # it, the bare POLL_TIMEOUT poll on :enabled is starved under darwin CI load.
+    # Key the wait on `only-in-a.txt` (unique to repoA): `two.txt` exists in BOTH
+    # repos, so a stale B tree would satisfy it immediately and the wait would not
+    # prove the fsListAll actually rebound to repoA.
+    And the file browser should show a file "only-in-a.txt"
     And the Code tab "back" button should be enabled
     When I go back in the Code tab
     Then the selected file should show content "one-A"
     # And terminal B's history is likewise intact when we return to it.
     When I select workspace switcher entry 2
     Then the selected file should show content "two-B"
+    # Same re-hydration wait as above on the return to terminal B — key it on
+    # `only-in-b.txt` (unique to repoB) for the same reason.
+    And the file browser should show a file "only-in-b.txt"
     And the Code tab "back" button should be enabled
     When I go back in the Code tab
     Then the selected file should show content "one-B"

@@ -27,7 +27,6 @@ export const useTerminalStore = createSharedRoot(() => {
   const view = useViewState();
   const metadata = useTerminalMetadata({
     list: terminalListSub,
-    activeId: view.activeId,
   });
   const subPanel = useSubPanel();
 
@@ -92,9 +91,38 @@ export const useTerminalStore = createSharedRoot(() => {
     return budget.includes(parentId) && isActiveSplit(panel, id);
   }
 
+  // Bundle the active terminal id with ITS OWN metadata so a consumer gets a
+  // consistent (id, meta) pair from one reactive read. Handed to the right panel
+  // as two separate sources — the activeId signal and the activeMeta memo — they
+  // can tear on a terminal switch (the new active id paired with the PREVIOUS
+  // terminal's metadata for a propagation step), which makes CodeTab's repo-
+  // change reset wipe the new terminal's Code-tab history (a darwin-only flake;
+  // see the Flaky Test Tracker). Reading getMetadata(id) for the bundled id is
+  // glitch-free.
+  const active = createMemo(() => {
+    const id = view.activeId();
+    return {
+      id,
+      meta: id !== null ? (metadata.getMetadata(id) ?? null) : null,
+    };
+  });
+
+  // The loose meta-only accessor is a thin view over the bundled pair — the one
+  // computation of "meta for the active terminal". An imperative reader (command
+  // palette, keyboard handler, tip gating) that needs only the cwd/agent reads
+  // this; a reactive consumer that pairs it with the id MUST read `active` so the
+  // pair stays glitch-free. Defining it off `active` rather than as a second
+  // `activeId -> meta` memo guarantees there is no separate tear-prone derivation
+  // to fall into.
+  const activeMeta = () => active().meta;
+
   return {
     // Live terminal list from server (Subscription<TerminalInfo[]>).
     listSub: terminalListSub,
+    // The active terminal id bundled with its own metadata (a consistent pair).
+    active,
+    // Meta-only view over the pair (imperative readers needing just cwd/agent).
+    activeMeta,
     // View state
     ...view,
     // Server metadata + activity + derived ordering

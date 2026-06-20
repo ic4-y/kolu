@@ -66,6 +66,21 @@ async function firstValue<T>(stream: AsyncIterable<T>): Promise<T | undefined> {
   return undefined;
 }
 
+/** The `keys()` first frame errored while the surface was still coming up (a
+ *  sensor starting up). Semantically "collection not ready yet" — a transient
+ *  that `waitFor` retries — but it carries the underlying cause so a PERSISTENT
+ *  startup failure surfaces in the deadline message instead of a bare timeout
+ *  (honoring `caught-error-must-not-collapse-to-empty`: the failure stays
+ *  distinguishable from a legitimately empty collection). */
+class SurfaceNotReadyError extends Error {
+  constructor(cause: unknown) {
+    super("awareness surface not ready (keys() first frame errored)", {
+      cause,
+    });
+    this.name = "SurfaceNotReadyError";
+  }
+}
+
 /** A one-shot snapshot of arivu's awareness collection (keys + first value each).
  *  Reading the `keys` first frame is bounded (it always yields the current set),
  *  and each present key's `get` yields its current value, so this never hangs. */
@@ -75,13 +90,49 @@ async function snapshot(
   const abort = new AbortController();
   const out = new Map<TerminalId, AwarenessValue>();
   try {
-    const keys =
-      (await firstValue(await client.surface.awareness.keys({}))) ?? [];
+    // `snapshot` is the SINGLE place that understands the live, reconciling
+    // collection, so it owns the entire transient/real distinction — `waitFor`
+    // below stays a pure condition-poller that retries ONLY the one tagged
+    // transient (`SurfaceNotReadyError`) and lets every other exception
+    // propagate immediately with its stack (a blanket catch there would bury
+    // the surgical present-key rethrow at the end of this function, plus
+    // TypeErrors/assertion bugs, as timeout-shaped failures with no stack).
+    // Two transient sources, two narrow suppressions:
+    //
+    //   1. The `keys()` first frame can error while the surface is still coming
+    //      up (a sensor starting up) — that's "collection not ready yet", which
+    //      is indistinguishable from (and semantically) an empty key set. Tag
+    //      it as `SurfaceNotReadyError` so `waitFor` retries (callers poll until
+    //      the expected key appears); if it never clears, the deadline message
+    //      carries the original cause rather than a bare timeout.
+    let keys: readonly TerminalId[];
+    try {
+      keys = (await firstValue(await client.surface.awareness.keys({}))) ?? [];
+    } catch (e) {
+      throw new SurfaceNotReadyError(e); // surface not ready — no keys yet
+    }
     for (const key of keys) {
-      const v = await firstValue(
-        await client.surface.awareness.get({ key }, { signal: abort.signal }),
-      );
-      if (v) out.set(key, v);
+      //   2. A key listed by `keys()` can be removed (its terminal reconciled
+      //      out) before its `get()` resolves, surfacing as an oRPC stream error
+      //      ("key not found at first snapshot"). Suppress ONLY that vanished-key
+      //      race — confirmed by re-reading `keys()` — so a real `get` failure on
+      //      a still-present key surfaces (rethrown below) instead of silently
+      //      dropping the key (which would let the reconciliation assertion pass
+      //      for the wrong reason). The message isn't reliable across the wire,
+      //      so we re-check membership rather than match on it.
+      try {
+        const v = await firstValue(
+          await client.surface.awareness.get({ key }, { signal: abort.signal }),
+        );
+        if (v) out.set(key, v);
+      } catch (e) {
+        const stillListed =
+          (await firstValue(await client.surface.awareness.keys({})))?.includes(
+            key,
+          ) ?? false;
+        if (stillListed) throw e; // a real failure on a present key
+        // else: key vanished between keys() and get() — omit it
+      }
     }
   } finally {
     abort.abort();
@@ -89,15 +140,32 @@ async function snapshot(
   return out;
 }
 
+/** Poll `fn` until it returns a defined value or the deadline passes. Retries on
+ *  an `undefined` ("not yet") result OR a tagged `SurfaceNotReadyError` (the one
+ *  startup transient `snapshot` raises) — and lets EVERY other exception (a real
+ *  present-key `get` failure, a TypeError, an assertion bug) propagate
+ *  immediately with its stack intact rather than swallow it into a timeout. The
+ *  last `SurfaceNotReadyError` is stashed so a startup error that never clears
+ *  surfaces its cause in the deadline message instead of a bare timeout. */
 async function waitFor<T>(
   fn: () => Promise<T | undefined>,
   ms = 10000,
 ): Promise<T> {
   const deadline = Date.now() + ms;
+  let lastNotReady: SurfaceNotReadyError | undefined;
   for (;;) {
-    const r = await fn();
-    if (r !== undefined) return r;
-    if (Date.now() >= deadline) throw new Error("condition not met in time");
+    try {
+      const r = await fn();
+      if (r !== undefined) return r;
+    } catch (e) {
+      if (!(e instanceof SurfaceNotReadyError)) throw e;
+      lastNotReady = e;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("condition not met in time", {
+        cause: lastNotReady?.cause,
+      });
+    }
     await sleep(75);
   }
 }

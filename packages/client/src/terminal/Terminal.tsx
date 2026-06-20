@@ -114,6 +114,10 @@ const Terminal: Component<{
   visible: boolean;
   /** When true, this terminal should grab keyboard focus. */
   focused?: boolean;
+  /** Bumped by the host to force a focus re-assert when the reactive `focused`
+   *  state can't (e.g. after a sibling sub-tab close steals focus to its close
+   *  button without changing this terminal's focus target). */
+  refocusNonce?: number;
   theme: ITheme;
   searchOpen: boolean;
   onSearchOpenChange: (open: boolean) => void;
@@ -298,14 +302,20 @@ const Terminal: Component<{
     ),
   );
 
-  // Grab focus when the focused prop transitions to true (e.g. sub-panel toggle).
+  // Restore focus from two trigger sources, one guard. The `focused` prop
+  // transitioning to true (e.g. a sub-panel toggle) grabs focus; and the host
+  // bumping `refocusNonce` re-fires this effect WITHOUT a `focused` transition.
+  // The re-grab still requires `props.focused` (only the focus-owning pane
+  // responds) — it's the *edge-less re-fire* that's new: a sibling sub-tab close
+  // moves focus to the (about-to-be-removed) close button without changing this
+  // pane's `focused`, so the nonce is what repairs it before the browser's
+  // non-deterministic focus-after-removal lands (the linux flake this fixes).
+  // `on` over the array re-runs when either element changes.
   createEffect(
     on(
-      () => props.focused,
-      (focused) => {
-        if (focused && props.visible && terminal) {
-          focusOnSelection();
-        }
+      () => [props.focused, props.refocusNonce] as const,
+      () => {
+        if (props.focused && props.visible && terminal) focusOnSelection();
       },
       { defer: true },
     ),
