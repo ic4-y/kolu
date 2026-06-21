@@ -38,12 +38,11 @@ const TileTitleActions: Component<{
   const commandPalette = useCommandPalette();
   const rightPanel = useRightPanel();
   const subPanel = useSubPanel();
-  const { activeThemeName } = useThemeManager();
+  const { getTerminalThemeName } = useThemeManager();
   const { showTipOnce } = useTips();
 
   const meta = () => store.getMetadata(props.id);
-  const themeName = () =>
-    store.activeId() === props.id ? activeThemeName() : meta()?.themeName;
+  const themeName = () => getTerminalThemeName(props.id);
   const subCount = () => store.getDisplayInfo(props.id)?.subCount ?? 0;
   const splitExpanded = () =>
     subCount() > 0 && !subPanel.getSubPanel(props.id).collapsed;
