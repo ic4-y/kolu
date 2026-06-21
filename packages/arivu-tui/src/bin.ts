@@ -1,14 +1,14 @@
 /**
  * arivu-tui — a terminal-side viewer for a running `arivu` daemon. It dials
  * arivu's unix socket and reads the `awareness` collection: what each terminal
- * *is in* (repo branch · PR + checks · agent state · foreground), where
+ * *is in* (repo·branch · PR + checks · agent state · foreground), where
  * kaval-tui shows what's *running* in each PTY.
  *
- *   arivu-tui list [--json]   every terminal's full awareness (a vertical record each)
- *   arivu-tui watch <id>      follow one terminal's awareness live (Ctrl-C to stop)
+ *   arivu-tui            an OpenTUI dashboard — one row per terminal, with a
+ *                        live clock; the rows are a point-in-time snapshot
+ *                        (live refresh lands in P3 PR2b). Ctrl-C to quit.
+ *   arivu-tui --json     a one-shot machine-readable dump (a top-level array)
  *
- * `list` prints a short id (the leading chars of the full uuid); `<id>` in
- * `watch` is that short form or any unique prefix, resolved against the live set.
  * By default it reaches an arivu on THIS machine. Two ways to point it
  * elsewhere, mutually exclusive:
  *   --socket PATH   a different LOCAL socket.
@@ -21,90 +21,53 @@
  *                   with no extra flag. Add `--kaval <path>` only to pick one
  *                   when several kavals run on the host. Nothing survives the
  *                   link (arivu is ephemeral by design).
+ *
+ * The dashboard is rendered with OpenTUI under Bun; the `arivu` daemon and the
+ * rest of kolu stay on Node. The OpenTUI renderer is imported dynamically and
+ * ONLY when stdout is a TTY, so `--json` / a piped run stays a plain one-shot
+ * and never loads the native renderer.
  */
 
-import { homedir } from "node:os";
-import { ARIVU_CONTRACT_VERSION, type TerminalId } from "@kolu/arivu-contract";
+import { ARIVU_CONTRACT_VERSION } from "@kolu/arivu-contract";
 import { arivuSocketPath } from "@kolu/arivu-contract/socket";
-import { cli, command } from "cleye";
+import { cli } from "cleye";
 import { type Connection, connectArivu } from "./connect.ts";
 import { connectArivuViaHost } from "./hostConnect.ts";
 import { snapshotAwareness } from "./read.ts";
-import {
-  formatAwarenessJson,
-  formatAwarenessList,
-  formatAwarenessRow,
-  resolveTerminalId,
-  shortId,
-} from "./render.ts";
-
-// cleye binds flags only AFTER the subcommand, so `--socket` goes after the
-// command: `arivu-tui list --socket <path>`, never before it.
-const socketFlag = {
-  socket: {
-    type: String,
-    description:
-      "the arivu socket to dial — goes AFTER the subcommand. Default: $XDG_RUNTIME_DIR/arivu/awareness.sock (or /tmp/arivu-$UID/awareness.sock off systemd).",
-  },
-} as const;
-
-// --host reaches a REMOTE arivu over ssh, provisioning it with Nix. Mutually
-// exclusive with --socket (a local path); the conflict is rejected in main().
-const hostFlag = {
-  host: {
-    type: String,
-    description:
-      "reach an arivu on a remote machine over ssh, provisioning it via Nix — e.g. --host nix@prod. The remote arivu dials the remote kaval and recomputes awareness from now. Mutually exclusive with --socket. Goes AFTER the subcommand.",
-  },
-} as const;
-
-// --kaval pins WHICH kaval the remote arivu dials, for a host running several
-// (e.g. two kolu-servers). Only meaningful with --host; rejected otherwise.
-const kavalFlag = {
-  kaval: {
-    type: String,
-    description:
-      "with --host: the kaval pty-host socket the remote arivu should dial (e.g. $XDG_RUNTIME_DIR/kaval-<port>/pty-host.sock). Default: the remote arivu discovers the running kaval (standalone, or a kolu-server). Goes AFTER the subcommand.",
-  },
-} as const;
-
-// Every subcommand can target a local socket or a remote host (+ pick the
-// remote's kaval).
-const endpointFlags = { ...socketFlag, ...hostFlag, ...kavalFlag } as const;
+import { formatAwarenessJson } from "./render.ts";
 
 const argv = cli({
   name: "arivu-tui",
   version: ARIVU_CONTRACT_VERSION,
   help: {
     description:
-      "A viewer for the arivu terminal-awareness daemon (beta). Dials a running arivu over its local unix socket — start it with `arivu` (which itself needs a running kaval). Use `--host <ssh>` to provision and dial an arivu on a remote machine.",
+      "A dashboard of what every terminal is in (repo·branch · PR · agent · foreground), read from a running `arivu` (start it with `arivu`, which needs a running kaval). `--json` dumps it for scripts; `--host <ssh>` reads a remote machine over ssh.",
   },
-  commands: [
-    command({
-      name: "list",
-      help: {
-        description:
-          "Show every terminal's awareness — a vertical record per terminal.",
-      },
-      flags: {
-        ...endpointFlags,
-        json: {
-          type: Boolean,
-          description: "machine-readable JSON output (a top-level array)",
-          default: false,
-        },
-      },
-    }),
-    command({
-      name: "watch",
-      parameters: ["<id>"],
-      help: {
-        description:
-          "Follow one terminal's awareness live until Ctrl-C. <id> is the short id from `list` or any unique prefix.",
-      },
-      flags: { ...endpointFlags },
-    }),
-  ],
+  // No subcommands — bare `arivu-tui` IS the dashboard, so flags are top-level
+  // (no "flags go after the subcommand" footgun).
+  flags: {
+    socket: {
+      type: String,
+      description:
+        "the arivu socket to dial. Default: $XDG_RUNTIME_DIR/arivu/awareness.sock (or /tmp/arivu-$UID/awareness.sock off systemd).",
+    },
+    host: {
+      type: String,
+      description:
+        "reach an arivu on a remote machine over ssh, provisioning it via Nix — e.g. --host nix@prod. The remote arivu dials the remote kaval and recomputes awareness from now. Mutually exclusive with --socket.",
+    },
+    kaval: {
+      type: String,
+      description:
+        "with --host: the kaval pty-host socket the remote arivu should dial (e.g. $XDG_RUNTIME_DIR/kaval-<port>/pty-host.sock). Default: the remote arivu discovers the running kaval (standalone, or a kolu-server).",
+    },
+    json: {
+      type: Boolean,
+      description:
+        "one-shot machine-readable JSON (a top-level array) instead of the dashboard",
+      default: false,
+    },
+  },
 });
 
 function fail(message: string): never {
@@ -138,130 +101,57 @@ function connectHost(
   );
 }
 
-async function cmdList(conn: Connection, json: boolean): Promise<void> {
-  const entries = await snapshotAwareness(conn.client);
-  process.stdout.write(
-    json
-      ? `${formatAwarenessJson(entries)}\n`
-      : `${formatAwarenessList(entries, { home: homedir() })}\n`,
-  );
-}
-
-async function cmdWatch(conn: Connection, query: string): Promise<void> {
-  // Resolve the id-or-prefix against the live set first — an honest not-found
-  // before we open a follow stream.
-  const entries = await snapshotAwareness(conn.client);
-  const result = resolveTerminalId(
-    query,
-    entries.map(([id]) => id),
-  );
-  if (result.kind === "none") {
-    fail(
-      `no terminal matching "${query}" — \`arivu-tui list\` shows the live ones.`,
-    );
-  }
-  if (result.kind === "ambiguous") {
-    fail(
-      `"${query}" matches ${result.matches.length} terminals — type more characters:\n  ${result.matches
-        .map(shortId)
-        .join("\n  ")}`,
-    );
-  }
-  const id: TerminalId = result.id;
-
-  const abort = new AbortController();
-  const stop = (): void => abort.abort();
-  process.on("SIGINT", stop);
-  process.stderr.write(`— watching ${shortId(id)} · Ctrl-C to stop\n`);
-
-  // End the follow when the terminal departs (its key leaves the set) — the
-  // per-key value stream does not self-end on removal, so the keys stream is
-  // what tells us it's gone. Fire-and-forget; `conn.dispose()` reaps it.
-  void (async () => {
-    try {
-      for await (const keys of await conn.client.surface.awareness.keys({})) {
-        if (!keys.includes(id)) {
-          abort.abort();
-          break;
-        }
-      }
-    } catch (err) {
-      // An abort (Ctrl-C, or the terminal departed) and the normal
-      // dispose-driven teardown both surface here as aborted — stay silent.
-      // A keys-stream failure BEFORE any abort is a real fault, not "nothing to
-      // do": surface it rather than collapse it to empty (the main `get` stream
-      // usually reports the same link failure, but a keys-only fault would
-      // otherwise vanish).
-      if (!abort.signal.aborted) {
-        process.stderr.write(
-          `arivu-tui: terminal-departure watch failed: ${(err as Error).message}\n`,
-        );
-      }
-    }
-  })();
-
-  try {
-    for await (const value of await conn.client.surface.awareness.get(
-      { key: id },
-      { signal: abort.signal },
-    )) {
-      // Home + clear, then repaint the single row — a live-updating view.
-      process.stdout.write("\x1b[H\x1b[2J");
-      process.stdout.write(
-        `${formatAwarenessRow(id, value, { home: homedir() })}\n`,
-      );
-    }
-  } catch (err) {
-    if (!abort.signal.aborted) fail((err as Error).message);
-  } finally {
-    process.off("SIGINT", stop);
-  }
-  process.stderr.write(`— ${shortId(id)} is no longer watched\n`);
-}
-
 async function main(): Promise<void> {
-  // cleye already handled --help / --version. We land here with no command for
-  // bare `arivu-tui` (show help) or a flag BEFORE the subcommand (cleye binds
-  // flags only after the command, so a leading flag swallows it) — steer that
-  // to the right order rather than dumping bare help.
-  if (argv.command === undefined) {
-    if (process.argv.length > 2) {
-      fail(
-        "no command. Flags go AFTER the subcommand — try `arivu-tui list --socket <path>` (not `arivu-tui --socket <path> list`). `arivu-tui --help` lists the commands.",
-      );
-    }
-    argv.showHelp();
-    process.exit(1);
-  }
-
-  // Pick the transport: --host reaches a remote arivu over ssh; otherwise dial
-  // a local socket. They name two different daemons (an ssh target vs a path),
-  // so passing both is a usage error rather than a precedence puzzle.
+  // --host reaches a remote arivu over ssh; --socket a local one. They name two
+  // different daemons, so passing both is a usage error, not a precedence puzzle.
   if (argv.flags.host !== undefined && argv.flags.socket !== undefined) {
     fail(
       "--host and --socket are mutually exclusive: --host reaches a remote arivu over ssh, --socket dials a local one. Pass just one.",
     );
   }
-  // --kaval selects WHICH kaval the remote arivu dials — it only travels over
-  // the --host dial. Without --host there is no remote arivu to point at (a
-  // local arivu was already started against its own kaval), so reject it loudly
-  // rather than silently ignore it.
+  // --kaval only travels over the --host dial (it picks which kaval the remote
+  // arivu reads); without --host there is no remote arivu to point at.
   if (argv.flags.kaval !== undefined && argv.flags.host === undefined) {
     fail(
       "--kaval only applies with --host (it picks which kaval the remote arivu dials). For a local arivu, point arivu itself at the kaval when you start it.",
     );
   }
+  // The OpenTUI renderer owns the terminal; a pipe has no TTY to own. So a piped
+  // run must ask for the scriptable form explicitly rather than silently degrade
+  // — fail loud before we even dial.
+  if (!argv.flags.json && !process.stdout.isTTY) {
+    fail(
+      "stdout is not a TTY — pass --json for scriptable output (the dashboard needs an interactive terminal).",
+    );
+  }
+
   const conn =
     argv.flags.host !== undefined
       ? await connectHost(argv.flags.host, argv.flags.kaval)
       : await connectLocal(argv.flags.socket);
+
+  // Read the awareness collection ONCE, then release the link: PR2a renders a
+  // point-in-time snapshot, so the dashboard needs no live connection (and a
+  // remote daemon's forwarded stderr can't reach the alt-screen once the link is
+  // gone). PR2b will instead hold the link and mirror it for live rows.
+  let entries: Awaited<ReturnType<typeof snapshotAwareness>>;
   try {
-    if (argv.command === "list") await cmdList(conn, argv.flags.json);
-    else if (argv.command === "watch") await cmdWatch(conn, argv._.id);
-    else fail("unhandled command — add a dispatch branch for it");
+    entries = await snapshotAwareness(conn.client);
   } finally {
     conn.dispose();
   }
+
+  if (argv.flags.json) {
+    // Scriptable one-shot — never touches the renderer.
+    process.stdout.write(`${formatAwarenessJson(entries)}\n`);
+    process.exit(0);
+  }
+
+  // Interactive terminal: the OpenTUI dashboard until Ctrl-C. Imported
+  // dynamically + behind the TTY gate so a piped/JSON run never loads the
+  // Bun-only native renderer.
+  const { runDashboardTui } = await import("./tui.tsx");
+  await runDashboardTui({ entries });
   process.exit(0);
 }
 

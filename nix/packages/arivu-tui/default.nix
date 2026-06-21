@@ -84,11 +84,23 @@ stdenv.mkDerivation (finalAttrs: {
   dontFixup = true;
   dontPatchShebangs = true;
 
-  # No client bundle in PR1 — the viewer runs its TS source directly under Bun
-  # (today's columnify text output, behaviour-preserving). PR2 adds the OpenTUI
-  # bundle here.
+  # Drive `bun build.ts` ourselves instead of the bun2nix hook's build phase, so
+  # the @opentui/solid plugin (not a runtime preload) does the JSX transform at
+  # build time — see packages/arivu-tui/build.ts for why.
   dontUseBunBuild = true;
-  dontBuild = true;
+
+  # Bring the viewer source + its build script into the bun project root (deps
+  # already populated above), then run `bun build.ts` to produce dist/bin.js — see
+  # packages/arivu-tui/build.ts for what gets bundled vs left native and why.
+  # `cp -L` because the store sources are read-only; build.ts only reads them, and
+  # Bun.build writes dist/ into the writable build root.
+  buildPhase = ''
+    runHook preBuild
+    cp -rL ${koluSrc}/packages/arivu-tui/src ./src
+    cp -L ${koluSrc}/packages/arivu-tui/build.ts ./build.ts
+    ${bun}/bin/bun build.ts
+    runHook postBuild
+  '';
 
   # @kolu/* are Nix-store sources, not bun.lock entries — drop them into
   # node_modules AFTER bun install populates it. cp -rL (not symlink): the
@@ -111,27 +123,30 @@ stdenv.mkDerivation (finalAttrs: {
       koluPackages)}
   '';
 
+  # Ship the compiled bundle (NOT src — the runtime exec's dist/bin.js), the
+  # node_modules the bundle resolves its `external` deps from at runtime (incl.
+  # @opentui/core's per-arch native package), and package.json for its
+  # `"type": "module"`.
   installPhase = ''
     runHook preInstall
     mkdir -p $out/lib/arivu-tui
-    cp -rL ${koluSrc}/packages/arivu-tui/src $out/lib/arivu-tui/src
+    cp -rL dist $out/lib/arivu-tui/dist
     cp -r node_modules $out/lib/arivu-tui/
-    cp package.json bunfig.toml $out/lib/arivu-tui/
+    cp package.json $out/lib/arivu-tui/
     runHook postInstall
   '';
 
-  # Build-time smoke: run the INSTALLED entry under Bun so a missing hydrated
-  # dep, a Bun-vs-Node resolver gap, or a node-compat hole fails the Nix build
-  # here — not silently at the user's first invocation. `--help` is the cheapest
-  # full proof: cleye's `cli()` runs at module top level, so reaching the help
-  # exit forces Bun to resolve+evaluate the ENTIRE import graph (every hydrated
-  # @kolu/* and ./connect, ./hostConnect, ./read, ./render) before it prints and
-  # exits 0 — all WITHOUT a live arivu socket. Exercises $out's exact tree (the
-  # installed src + hydrated node_modules), the same files the wrapper exec's.
+  # Build-time smoke: run the INSTALLED bundle under Bun so a bad bundle, a
+  # missing runtime dep, or a node-compat hole fails the Nix build here — not
+  # silently at the user's first invocation. `--help` exits 0 before bin.ts
+  # dynamically imports the OpenTUI renderer, so this proves the bundle loads and
+  # runs under Bun without needing a TTY or the native lib (the native dlopen is
+  # exercised by the real render, captured separately). Runs $out's exact tree
+  # (dist/bin.js + the hydrated node_modules), the same file the wrapper exec's.
   doInstallCheck = true;
   installCheckPhase = ''
     runHook preInstallCheck
-    ${bun}/bin/bun $out/lib/arivu-tui/src/bin.ts --help > /dev/null
+    ${bun}/bin/bun $out/lib/arivu-tui/dist/bin.js --help > /dev/null
     runHook postInstallCheck
   '';
 
@@ -140,7 +155,7 @@ stdenv.mkDerivation (finalAttrs: {
   # the wrapper consumes `arivuTuiBuilt.entryPath` — one value, so the two files
   # cannot silently desync (no cross-file string to keep in step, no build-time
   # guard).
-  passthru.entryPath = "${finalAttrs.finalPackage}/lib/arivu-tui/src/bin.ts";
+  passthru.entryPath = "${finalAttrs.finalPackage}/lib/arivu-tui/dist/bin.js";
 
   meta = {
     description = "arivu-tui viewer — Bun-built tree (viewer source + hydrated @kolu/* + node_modules)";
