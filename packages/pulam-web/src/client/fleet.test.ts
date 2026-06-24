@@ -21,7 +21,9 @@ import { describe, expect, it } from "vitest";
 import {
   basename,
   compareFleetEntries,
+  DEFAULT_FLEET_FILTERS,
   type FleetEntry,
+  fleetAlert,
   isVisible,
   locationText,
   pipVariantFor,
@@ -136,6 +138,21 @@ describe("isVisible", () => {
   });
 });
 
+describe("DEFAULT_FLEET_FILTERS (the full agent board out of the box)", () => {
+  it("shows every agent by default — active AND idle, agentless hidden", () => {
+    // idle ON so the board reads as a full agent board, not just "who needs me".
+    expect(DEFAULT_FLEET_FILTERS.idle).toBe(true);
+    expect(DEFAULT_FLEET_FILTERS.nonagent).toBe(false);
+    expect(DEFAULT_FLEET_FILTERS.sleeping).toBe(false);
+  });
+  it("with the default, both agent categories show; the agentless ones don't", () => {
+    expect(isVisible("active", DEFAULT_FLEET_FILTERS)).toBe(true);
+    expect(isVisible("idle", DEFAULT_FLEET_FILTERS)).toBe(true);
+    expect(isVisible("nonagent", DEFAULT_FLEET_FILTERS)).toBe(false);
+    expect(isVisible("sleeping", DEFAULT_FLEET_FILTERS)).toBe(false);
+  });
+});
+
 describe("locationText", () => {
   it("repo · branch when in a repo", () => {
     const v: AwarenessValue = {
@@ -191,5 +208,27 @@ describe("pipVariantFor (the shared StatePip variant — fleet ≡ Dock)", () =>
     };
     expect(pipVariantFor(withForeground)).toBe("idle");
     expect(pipVariantFor(seedAwarenessValue("/x"))).toBe("sleeping");
+  });
+});
+
+describe("fleetAlert (the per-row badge — fleet ≡ the Dock's alert membership)", () => {
+  it("the notify-class states (blocked + just-finished) raise the alert", () => {
+    // Folds through the shared `alertClass`, the SAME membership kolu's
+    // useTerminalAlerts fires on — so the fleet badge can't drift from the Dock.
+    expect(fleetAlert(withAgent("awaiting_user"))).toBe(true);
+    expect(fleetAlert(withAgent("waiting"))).toBe(true);
+  });
+  it("the quiet working states do not", () => {
+    expect(fleetAlert(withAgent("thinking"))).toBe(false);
+    expect(fleetAlert(withAgent("tool_use"))).toBe(false);
+    expect(fleetAlert(withAgent("running_background"))).toBe(false);
+  });
+  it("a terminal with no agent has nothing to notify about", () => {
+    expect(fleetAlert(seedAwarenessValue("/x"))).toBe(false);
+    const withForeground: AwarenessValue = {
+      ...seedAwarenessValue("/x"),
+      foreground: { name: "vim", title: null },
+    };
+    expect(fleetAlert(withForeground)).toBe(false);
   });
 });

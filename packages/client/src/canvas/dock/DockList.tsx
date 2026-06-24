@@ -2,7 +2,7 @@
  *  layouts: the phone's left-edge swipe drawer (inlined in `MobileTileView`)
  *  and the compact layout's persistent left rail (`CompactTileView`).
  *
- *  Rows match the desktop bare-dock layout — `[activity] [agent] branch [pips] time`
+ *  Rows match the desktop bare-dock layout — `[indicator] branch [pips] time`
  *  over a CSS subgrid — but with uniform `py-3` so every tap target clears the iOS /
  *  Android 44-48 px minimum. No reply input and no xterm buffer tail; the user's
  *  intent here is "switch to that other terminal", not "respond inline".
@@ -19,19 +19,21 @@ import { activeArm, type TerminalId } from "kolu-common/surface";
 import { For, Show } from "solid-js";
 import { IntentMarkdownInline } from "../../intent/IntentMarkdown";
 import { annotationLine } from "../../intent/text";
+import { useTerminalActivity } from "../../terminal/useTerminalActivity";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
 import { useTileStore } from "../../tile/useTileStore";
 import {
   DOCK_CARDS_SUBGRID_LEFT_RESTORE,
   DOCK_ROW_BRANCH_COL,
-  DOCK_ROW_GRID_TOUCH,
+  DOCK_ROW_GRID,
 } from "../../ui/chromeSpacing";
 import type { DockRowBucket } from "./dockRowRanking";
 import type { DockGroup } from "./dockTree";
 import { HiddenFooter } from "./HiddenFooter";
 import RecencyCell from "./RecencyCell";
 import { StatePip } from "@kolu/solid-statepip";
-import { ActivityPip, createDockRowData, PrPip, SubCountCell } from "./RowPips";
+import { DOCK_ROW_PIP_BOX } from "@kolu/solid-statepip/pipVariant";
+import { createDockRowData, PrPip, SubCountCell } from "./RowPips";
 import { pipVariant } from "./pipVariant";
 import { rowSubline } from "./rowSubline";
 import { useDockOrder } from "./useDockOrder";
@@ -72,12 +74,13 @@ function DockListSection(props: {
   group: DockGroup;
   onSelect: (id: TerminalId) => void;
 }) {
-  // Subgrid container — same shape as the desktop dock. Five cols:
-  // activity · agent · branch · sub-count · time. The leading 12px
-  // activity track is fixed (not `auto`) so the live dot never shifts
-  // the agent column. PR pip lives on line 2 (left) alongside the
-  // subline, anchored to the branch column's left edge so PR icons
-  // align across every section.
+  // Subgrid container — same shape as the desktop dock (the shared
+  // `DOCK_ROW_GRID`). Four cols: indicator · branch · sub-count · time.
+  // The leading 18px indicator track is fixed (not `auto`) holding the
+  // merged `StatePip` (its green live ring replacing the old standalone
+  // activity dot), so the indicator never shifts as its axes flip. PR
+  // pip lives on line 2 (left) alongside the subline, anchored to the
+  // branch column's left edge so PR icons align across every section.
   //
   // Right gutter (`pr-3` / `-mr-3`) happens to match the desktop
   // `DOCK_CARDS_GUTTER_*` value today, but the two are kept separate
@@ -89,11 +92,11 @@ function DockListSection(props: {
       data-testid="mobile-dock-section"
       data-repo={props.group.name}
       style={{ "--repo-color": props.group.color }}
-      class={`dock-cards-section grid ${DOCK_ROW_GRID_TOUCH} gap-x-3 pl-6 pr-3`}
+      class={`dock-cards-section grid ${DOCK_ROW_GRID} gap-x-3 pl-3 pr-3`}
     >
       <div
         data-testid="mobile-dock-section-header"
-        class="dock-cards-section-header col-span-full flex items-center gap-2 -ml-6 -mr-3 pl-3 pr-3 py-2 border-y border-edge/30"
+        class="dock-cards-section-header col-span-full flex items-center gap-2 -ml-3 -mr-3 pl-3 pr-3 py-2 border-y border-edge/30"
       >
         <span
           data-testid="mobile-dock-section-name"
@@ -121,11 +124,10 @@ function DockListSection(props: {
 }
 
 /** Touch counterpart to `Dock.tsx`'s `DockRow`. Geometry is shared
- *  (two-line subgrid, activity + agent slot + branch + sub-count +
- *  time on line 1, PR pip + subline on line 2); the two diverge on touch
- *  target sizing, the Corvu drag-to-dismiss pointer-down trap, and
- *  the absence of a `Cmd+N` shortcut hint. Update both files when
- *  row geometry changes. */
+ *  (two-line subgrid, indicator + branch + sub-count + time on line 1,
+ *  PR pip + subline on line 2); the two diverge on touch target sizing,
+ *  the Corvu drag-to-dismiss pointer-down trap, and the absence of a
+ *  `Cmd+N` shortcut hint. Update both files when row geometry changes. */
 function DockListRow(props: {
   id: TerminalId;
   /** ORDER bucket — drives `data-bucket`. */
@@ -137,6 +139,7 @@ function DockListRow(props: {
 }) {
   const store = useTerminalStore();
   const tileStore = useTileStore();
+  const activity = useTerminalActivity();
   const combined = createDockRowData(props.id);
   const active = () => tileStore.activeId() === props.id;
   const unread = () => store.isUnread(props.id);
@@ -177,8 +180,18 @@ function DockListRow(props: {
           // as one symbol.
           class={`w-full grid grid-cols-subgrid col-span-full items-center py-3 ${DOCK_CARDS_SUBGRID_LEFT_RESTORE} -mr-3 pr-3 border-l-[length:var(--dock-edge-stripe-w)] border-l-transparent border-b border-b-edge/15 text-left transition-colors duration-150 cursor-pointer active:bg-surface-2 data-[active]:bg-accent/15 data-[active]:border-l-accent`}
         >
-          <ActivityPip id={props.id} />
-          <StatePip variant={pipVariant(props.pip, unread())} />
+          {/* One merged status indicator — agent-state core, green live
+           *  ring, amber unread corner badge; centred across both row lines.
+           *  See Dock.tsx's DockRow. */}
+          <span class="row-span-2 flex self-center">
+            <StatePip
+              variant={pipVariant(props.pip)}
+              live={activity.isLive(props.id)}
+              alert={unread()}
+              alertLabel="unread alert"
+              class={DOCK_ROW_PIP_BOX}
+            />
+          </span>
           <span
             class="font-medium text-[0.9rem] leading-tight truncate min-w-0"
             style={{
@@ -192,7 +205,7 @@ function DockListRow(props: {
           <SubCountCell subCount={c().info.subCount} />
           {/* Recency cell — "Xs ago", same no-reflow width as the desktop
            *  dock, shared via RecencyCell. Live signal rides the leading
-           *  ActivityPip column. */}
+           *  StatePip's ring. */}
           <RecencyCell
             lastActivityAt={c().meta.lastActivityAt}
             textSize="text-[0.65rem]"

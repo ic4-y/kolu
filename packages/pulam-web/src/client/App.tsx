@@ -23,7 +23,9 @@ import {
   Show,
 } from "solid-js";
 import { createStore } from "solid-js/store";
-import { type FleetFilters, URGENCY } from "./fleet.ts";
+import { type PipVariant, StatePip } from "@kolu/solid-statepip";
+import { DOCK_ROW_PIP_BOX } from "@kolu/solid-statepip/pipVariant";
+import { DEFAULT_FLEET_FILTERS, type FleetFilters, URGENCY } from "./fleet.ts";
 import { HostGroup } from "./HostGroup.tsx";
 import { rememberServerProcessId } from "./wire.ts";
 
@@ -96,6 +98,70 @@ function createNow(): () => number {
   return now;
 }
 
+/** One legend entry — the REAL `StatePip` beside its meaning, so the legend can
+ *  never drift from what the rows actually draw (it renders the same component
+ *  over the same `(variant, live, alert)` axes). */
+function LegendItem(props: {
+  variant: PipVariant;
+  live?: boolean;
+  alert?: boolean;
+  alertLabel?: string;
+  label: string;
+}): JSX.Element {
+  return (
+    <span class="inline-flex items-center gap-1.5">
+      {/* The same `DOCK_ROW_PIP_BOX` the fleet rows reserve, so the legend pip
+       *  is pixel-for-pixel what a row draws — and the same `alertLabel`, so its
+       *  a11y wording matches the rows too. */}
+      <StatePip
+        variant={props.variant}
+        live={props.live}
+        alert={props.alert}
+        alertLabel={props.alertLabel}
+        class={DOCK_ROW_PIP_BOX}
+      />
+      <span>{props.label}</span>
+    </span>
+  );
+}
+
+/** The indicator legend — what each row's status indicator means, drawn from the
+ *  shared `StatePip` so it stays honest. Three axes: the agent-state CORE (shape),
+ *  the green live RING (moving bytes), and the amber alert corner BADGE (unread).
+ *  The live/alert rows use a plain idle core so each outer axis reads in isolation. */
+function Legend(): JSX.Element {
+  return (
+    <section class="mt-3 border-t border-[#1c2231] pt-2 text-[12px] text-[#8b94a6]">
+      <div class="mb-1.5 font-semibold text-[#aeb7c7]">Legend</div>
+      <div class="mb-1 text-[11px] uppercase tracking-[0.1em] text-[#5b6678]">
+        agent state
+      </div>
+      <div class="mb-2 flex flex-wrap gap-x-4 gap-y-1.5">
+        <LegendItem variant="working" label="working" />
+        <LegendItem variant="awaiting" label="needs you" />
+        <LegendItem variant="idle" label="idle" />
+        <LegendItem variant="sleeping" label="sleeping" />
+      </div>
+      <div class="mb-1 text-[11px] uppercase tracking-[0.1em] text-[#5b6678]">
+        activity &amp; alerts
+      </div>
+      <div class="flex flex-wrap gap-x-4 gap-y-1.5">
+        <LegendItem
+          variant="idle"
+          live
+          label="live — moving bytes (green ring)"
+        />
+        <LegendItem
+          variant="idle"
+          alert
+          alertLabel="needs attention"
+          label="needs attention — a notification fired (amber badge)"
+        />
+      </div>
+    </section>
+  );
+}
+
 /** One filter toggle in the footer — `+ label` off, `✓ label` on. */
 function FilterChip(props: {
   label: string;
@@ -123,11 +189,11 @@ export function App(): JSX.Element {
   const [hosts] = createResource(fetchHosts);
   const now = createNow();
 
-  // View filters — `active` agents always show; the rest are opt-in (default off).
+  // View filters — `active` agents always show; idle agents show by default too
+  // (the full agent board), with non-agent/sleeping shells opt-in. See
+  // DEFAULT_FLEET_FILTERS.
   const [filters, setFilters] = createStore<FleetFilters>({
-    idle: false,
-    nonagent: false,
-    sleeping: false,
+    ...DEFAULT_FLEET_FILTERS,
   });
   const toggle = (key: keyof FleetFilters): void => setFilters(key, (v) => !v);
 
@@ -229,6 +295,7 @@ export function App(): JSX.Element {
                 )}
               </For>
             </footer>
+            <Legend />
           </Show>
         </Show>
       </Show>

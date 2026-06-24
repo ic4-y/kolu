@@ -12,9 +12,11 @@
  *     like drishti's `processesSnapshot`).
  *
  * Rows sort needs-you-first (a blocked agent floats to the top, its glyph
- * breathing) and filter by category (active agents shown by default; idle agents,
- * non-agent terminals, and sleeping shells fold in via App's toggles). The
- * projection (bucket / urgency / sort / labels / colours) is `fleet.ts`.
+ * breathing) and filter by category. By default the board shows EVERY agent
+ * (active *and* idle — see `DEFAULT_FLEET_FILTERS`); the two agentless
+ * categories, non-agent terminals and sleeping shells, fold in via App's
+ * toggles. The projection (bucket / urgency / sort / labels / colours) is
+ * `fleet.ts`.
  *
  * The list `<For>` is keyed by the primitive terminal id and the id ordering is
  * an array-equality memo, so a value-only delta (an agent ticking state) updates
@@ -56,14 +58,14 @@ import {
   relativeTime,
 } from "@kolu/terminal-workspace/agentProjection";
 import { StatePip } from "@kolu/solid-statepip";
+import { DOCK_ROW_PIP_BOX } from "@kolu/solid-statepip/pipVariant";
 import {
   compareFleetEntries,
-  DOT_OFF_COLOR,
   type FleetEntry,
+  fleetAlert,
   type FleetFilters,
   HOST_COLOR,
   isVisible,
-  LIVE_COLOR,
   locationText,
   pipVariantFor,
   terminalCategory,
@@ -88,9 +90,12 @@ export interface HostGroupProps {
  *  agent keeps the lingering `awaiting` dot (theme alert violet) rather than the
  *  idle grey its sort implies — while the SORT, the needs-you row tint, and the
  *  state-cell label colour stay keyed off `urgency`. That order≠colour split is
- *  the Dock's, one fold over from the dock pip. The green dot rides the activity
- *  stream, orthogonal to agent state. Reads its value fine-grained off `value()`
- *  (a per-key subscription) so only this row re-renders on its own delta. */
+ *  the Dock's, one fold over from the dock pip. The indicator folds in two more
+ *  axes the Dock's does (R-activity-merge): the green live RING off the activity
+ *  stream and the amber "needs attention" corner BADGE off the shared `alertClass`
+ *  fold (live notify-class membership, not the Dock's per-row unread). Reads its
+ *  value fine-grained off `value()` (a per-key subscription) so only this row
+ *  re-renders on its own delta. */
 function AgentRow(props: {
   value: () => AwarenessValue | undefined;
   live: () => boolean;
@@ -115,25 +120,24 @@ function AgentRow(props: {
                 : undefined
             }
           >
-            <span
-              class="inline-block h-1.5 w-1.5 flex-none rounded-full"
-              classList={{
-                "animate-pulse motion-reduce:animate-none": props.live(),
-              }}
-              style={`background:${props.live() ? LIVE_COLOR : DOT_OFF_COLOR}`}
-              title="moving bytes"
+            {/* One merged status indicator — the SAME component kolu's Dock
+             *  renders, folding three axes into one glyph: the agent-state CORE
+             *  (`pipVariantFor`), the green live RING (this terminal moving
+             *  bytes, off the `activity` stream — the old standalone dot, now
+             *  the indicator's edge), and the amber corner BADGE (the per-row
+             *  alert pulam-web gains via the shared `alertClass` fold). The badge
+             *  announces "needs attention" here, not the Dock's "unread alert":
+             *  pulam-web tracks live notify-class membership, not per-row read
+             *  state, so it can't honestly claim an unread it never clears. So the
+             *  (state, live, alert) triple reads byte-identically here and in
+             *  the Dock; its fixed size keeps the name column aligned. */}
+            <StatePip
+              variant={pipVariantFor(value())}
+              live={props.live()}
+              alert={fleetAlert(value())}
+              alertLabel="needs attention"
+              class={DOCK_ROW_PIP_BOX}
             />
-            {/* The shared `StatePip` — the SAME component kolu's Dock renders, so
-             *  a given agent state shows the byte-identical pip (shape · colour ·
-             *  spin/pulse, all owned by the component) on both surfaces. The
-             *  width-reserved cell keeps the name column aligned whether the pip
-             *  draws a shape or (for an unknown state) nothing. */}
-            <span
-              class="flex flex-none items-center justify-center"
-              style="width:1.3ch"
-            >
-              <StatePip variant={pipVariantFor(value())} />
-            </span>
             <span
               class="w-[9ch] flex-none overflow-hidden text-ellipsis whitespace-nowrap text-[#c8d0de]"
               title={name()}

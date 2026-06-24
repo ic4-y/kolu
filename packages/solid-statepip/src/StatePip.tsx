@@ -1,45 +1,137 @@
-/** The shared status pip — kolu's on-canvas **Dock** and the **pulam-web** fleet
- *  dashboard both render THIS component, so a given `PipVariant` shows the
- *  identical glyph, colour, and animation on both surfaces. Shape carries the
- *  state distinction (filled disk vs hollow ring vs muted dot vs ☾) so the rule
- *  survives reduced colour sensitivity and a peripheral glance — not colour and
- *  animation alone.
+/** The shared status indicator — kolu's on-canvas **Dock** and the **pulam-web**
+ *  fleet dashboard both render THIS component, so a given (state, live, alert)
+ *  triple shows the identical glyph, colour, and animation on both surfaces.
+ *  Shape carries the state distinction (hollow ring vs muted dot vs ☾) so the
+ *  rule survives reduced colour sensitivity and a peripheral glance — not colour
+ *  and animation alone.
  *
- *  Pure presentation: it takes a PRECOMPUTED `variant` and renders the matching
- *  entry from `PIP_BODY` — the per-variant class set lives there, as data, so the
- *  agreed look is a single source pinned by a pure test (no DOM harness, matching
- *  the other `@kolu/solid-*` leaves). Each surface owns its own state→variant
- *  mapping (the Dock's `pipVariant`, pulam-web's `pipVariantFor`), both folding
- *  the shared agent-paint classes through `pipForPaintClass`. Colours are the
- *  shared `@kolu/theme` tokens, so both surfaces — which each
- *  `@import "@kolu/theme/theme.css"` — resolve them identically. */
+ *  Three nested axes in one glyph (R-activity-merge), so one look reads overall
+ *  activity instead of scanning two or three separate dots:
+ *    - `variant` (the CORE) — agent state, the precomputed `PipVariant`. Each
+ *      surface owns its own state→variant mapping (the Dock's `pipVariant`,
+ *      pulam-web's `pipVariantFor`), both folding the shared agent-paint classes
+ *      through `pipForPaintClass`.
+ *    - `live` (the RING) — this terminal is moving bytes right now: a thin green
+ *      arc that gently sweeps around the core (the row/title live signal, folded
+ *      into the indicator's edge; the glyph-only rail + sub-tabs keep the
+ *      standalone `LiveActivityDot` corner dot, which has no core to ring).
+ *    - `alert` (the BADGE) — a fired notification you haven't opened (the Dock's
+ *      `unread`, pulam-web's notify-class): a small amber corner badge, NOT a
+ *      ring — a surrounding alert ring (especially nested with the live ring)
+ *      read as overwhelming, so the two axes use different shapes and never
+ *      compound into concentric circles. The state core stays fully visible.
+ *
+ *  Pure presentation: the per-variant CORE class set lives in `PIP_BODY`; the
+ *  ring + badge are overlay elements whose class names (`LIVE_RING_CLASS`,
+ *  `ALERT_BADGE_CLASS`) and visuals live in `statepip.css` (a conic-gradient +
+ *  mask sweep, an absolutely-positioned badge — neither expressible as Tailwind
+ *  utilities). Both surfaces `@import` that CSS, so the rings can't drift; the
+ *  class data is pinned by a pure test (no DOM harness, matching the other
+ *  `@kolu/solid-*` leaves). Colours are the shared `@kolu/theme` tokens, so both
+ *  surfaces resolve them identically.
+ *
+ *  Accessibility: the overlay spans are decoration (`aria-hidden`), so the
+ *  wrapper's `title` / `aria-label` carry the meaning of ALL THREE axes — the
+ *  core's `PIP_TITLES` entry plus "live output" / the per-surface `alertLabel`
+ *  ("unread alert" on the Dock, "needs attention" on pulam-web) when those props
+ *  are set — so an alerting row still announces it (the old `attention` variant's
+ *  "Needs attention" affordance, now one axis over) instead of reading only its
+ *  core. When there's nothing to announce (an `empty` core with no outer axes)
+ *  the whole wrapper is `aria-hidden`, pulling it out of the accessibility tree —
+ *  a decorative placeholder, not an unlabelled image. */
 
 import { type Component, createMemo, Show } from "solid-js";
-import { PIP_BODY, PIP_TITLES, type PipVariant } from "./pipVariant.ts";
+import {
+  ALERT_BADGE_CLASS,
+  INDICATOR_BASE,
+  LIVE_RING_CLASS,
+  PIP_BODY,
+  PIP_TITLES,
+  type PipVariant,
+} from "./pipVariant.ts";
 
-export const StatePip: Component<{ variant: PipVariant }> = (props) => {
-  // Read `props.variant` ONCE per change. Callers pass the variant as a JSX-prop
-  // expression (`pipVariantFor(value())` / `pipVariant(props.pip, unread())`),
-  // which Solid compiles to a getter re-running its fold on every access, and the
-  // cell reads it at `data-pip`, `title`, and the body lookup. The memo collapses
+export const StatePip: Component<{
+  variant: PipVariant;
+  /** Terminal moving bytes right now → the green live-output RING around the
+   *  core. The activity dot, folded into the indicator's edge. Default off. */
+  live?: boolean;
+  /** A fired notification not yet opened → a small amber `--color-attention`
+   *  corner badge (top-right), NOT a ring, so it never compounds with the live
+   *  ring into nested circles; the state core stays fully visible (the Dock's
+   *  `unread`, pulam-web's notify-class). Default off. */
+  alert?: boolean;
+  /** What the alert badge MEANS on this surface, folded into the accessible
+   *  label / tooltip when `alert` is set. The two surfaces drive the badge off
+   *  DIFFERENT signals, so the wording can't be baked in here: the Dock's badge
+   *  is real read/unread terminal state ("unread alert"); pulam-web's is live
+   *  notify-class membership with no read tracking, so it says "needs attention"
+   *  rather than claiming an unread it can't clear. Default the generic "alert"
+   *  so a caller that sets `alert` without a label still announces something. */
+  alertLabel?: string;
+  /** Extra wrapper classes a surface adds on top of the content-sized leaf —
+   *  e.g. the `DOCK_ROW_PIP_BOX` fixed circle the dock/fleet rows pass to reserve
+   *  their column. Omitted by inline callers (the tile title, the column header),
+   *  which then size to their text/gap context. */
+  class?: string;
+}> = (props) => {
+  // Read each prop ONCE per change. Callers pass them as JSX-prop expressions
+  // (`pipVariantFor(value())` / `activity.isLive(id)` / `unread()`), which Solid
+  // compiles to getters re-running their fold on every access; the memos collapse
   // those to one fold per change on every consumer (carrying the original dock
   // `StatePip`'s memo forward across the lift).
   const variant = createMemo(() => props.variant);
   const body = createMemo(() => PIP_BODY[variant()]);
+  // The accessible label folds in ALL THREE axes, not just the core. The
+  // overlay spans are aria-hidden (pure decoration), so without this an unread
+  // row would read only its core ("Awaiting input") or nothing at all (an
+  // `empty` core) — silently dropping the old `attention` variant's "Needs
+  // attention" affordance. Compose the core title with the active outer axes so
+  // the live/alert meaning survives a hover or a screen reader.
+  const label = createMemo(() => {
+    const parts = [
+      PIP_TITLES[variant()],
+      props.live && "live output",
+      props.alert && (props.alertLabel ?? "alert"),
+    ].filter((p): p is string => Boolean(p));
+    return parts.join(" · ");
+  });
   return (
-    // `data-testid="dock-row-pip"` is the established e2e selector, now spanning
-    // all three surfaces this component renders on — the dock row pip, the canvas
-    // tile-title pip, and the pulam-web fleet row pip (see
-    // packages/tests/step_definitions); kept stable across the lift so the
-    // scenarios keep matching.
+    // `data-testid="state-pip"` is the surface-neutral e2e selector for this
+    // shared leaf, spanning all three surfaces it renders on — the dock row pip,
+    // the canvas tile-title pip, and the pulam-web fleet row pip (see
+    // packages/tests/step_definitions). `data-live`/`data-alert` expose the outer
+    // axes for tests/inspection.
     <span
-      class="flex items-center justify-center"
-      data-testid="dock-row-pip"
+      class={props.class ? `${INDICATOR_BASE} ${props.class}` : INDICATOR_BASE}
+      data-testid="state-pip"
       data-pip={variant()}
-      title={PIP_TITLES[variant()]}
+      data-live={props.live ? "" : undefined}
+      data-alert={props.alert ? "" : undefined}
+      title={label() || undefined}
+      // `role="img"` so the wrapper is a single labelled graphic — `aria-label`
+      // is only valid on a role that accepts a name, not a bare generic span (a
+      // STATIC role here so biome's `useAriaPropsSupportedByRole` can verify the
+      // pairing). When `label()` is empty — the decorative case (an `empty` core,
+      // no live/alert) — `aria-hidden` pulls the whole wrapper OUT of the
+      // accessibility tree, so assistive tech skips the purely-visual placeholder
+      // rather than announcing an unlabelled image (`role="img"` + `aria-label=""`
+      // reads as an unnamed image on some screen readers, not silently ignored).
+      role="img"
+      aria-label={label() || undefined}
+      aria-hidden={label() ? undefined : "true"}
     >
       <Show when={body()}>
         {(b) => <span class={b().class}>{b().glyph}</span>}
+      </Show>
+      {/* The two outer-axis overlays — a green arc that sweeps around the core
+          while the terminal is live, and a small amber corner badge while an
+          alert is unread (a badge, not a ring, so the two never compound into
+          nested circles). Visuals in statepip.css. */}
+      <Show when={props.live}>
+        <span class={LIVE_RING_CLASS} aria-hidden="true" />
+      </Show>
+      <Show when={props.alert}>
+        <span class={ALERT_BADGE_CLASS} aria-hidden="true" />
       </Show>
     </span>
   );

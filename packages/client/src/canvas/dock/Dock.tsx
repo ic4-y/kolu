@@ -26,16 +26,17 @@
  *     row count) that pins to the scrollport top until the next
  *     repo's header pushes it off — so a row's repo is legible at a
  *     glance and the label survives the scroll. Rows below stack as
- *     `activity · state · branch · pips · time` lines. The leading
- *     **activity pip** (`ActivityPip`) is a soft green pulse while the
- *     terminal streams output and nothing otherwise — the orthogonal
- *     "moving bytes right now" axis, sitting in a fixed-width reserved
- *     column so its presence never shifts the pips to its right. The
- *     **state pip** (`StatePip`) beside it encodes agent urgency by
- *     shape: filled orange disk + pulse for unread
- *     attention, dim small disk for already-seen awaiting, hollow
- *     spinning ring for working, muted dot for idle, nothing for
- *     parked/none. Agent kind is not surfaced here — it lives on
+ *     `indicator · branch · pips · time` lines. The leading **status
+ *     indicator** (`StatePip`) folds three axes into one glyph: the
+ *     agent-state CORE by shape (dim small disk for already-seen
+ *     awaiting, hollow spinning ring for working, muted dot for idle,
+ *     nothing for parked/none), a thin green **live ring** that gently
+ *     sweeps around it while the terminal is moving bytes ("moving bytes
+ *     right now", orthogonal to agent state), and a small amber **unread
+ *     corner badge** while a fired alert is unopened (a badge, not a
+ *     ring, so the two never compound into nested circles) — so one
+ *     glance reads overall activity and the state stays fully visible.
+ *     Agent kind is not surfaced here — it lives on
  *     the terminal title bar where there's room. PR pip is a link
  *     to the PR with the live checks verdict in its
  *     tooltip; the sub-terminal chip surfaces when there are nested
@@ -84,7 +85,7 @@ import {
   DOCK_CARDS_GUTTER_NEG_CLASS,
   DOCK_CARDS_SUBGRID_LEFT_RESTORE,
   DOCK_ROW_BRANCH_COL,
-  DOCK_ROW_GRID_DESKTOP,
+  DOCK_ROW_GRID,
   RAIL_WIDTH_PX,
 } from "../../ui/chromeSpacing";
 import { ChevronDownIcon, PlusIcon, SearchIcon } from "../../ui/Icons";
@@ -95,7 +96,8 @@ import type { DockGroup, DockTree } from "./dockTree";
 import { HiddenFooter } from "./HiddenFooter";
 import RecencyCell from "./RecencyCell";
 import { StatePip } from "@kolu/solid-statepip";
-import { ActivityPip, createDockRowData, PrPip, SubCountCell } from "./RowPips";
+import { DOCK_ROW_PIP_BOX } from "@kolu/solid-statepip/pipVariant";
+import { createDockRowData, PrPip, SubCountCell } from "./RowPips";
 import { pipVariant } from "./pipVariant";
 import { rowSubline } from "./rowSubline";
 import { useDockOrder } from "./useDockOrder";
@@ -356,23 +358,26 @@ const RepoSection: Component<{
    *  row per render. Built once per tree update by `RailOrCards`. */
   flatIndexOf: ReadonlyMap<TerminalId, number>;
 }> = (props) => (
-  // Section is the grid container. Five columns: activity · agent ·
-  // branch · sub-count · time. The leading activity column is a fixed
-  // 12px reserved track (not `auto`) so the live dot's presence never
-  // shifts the StatePip column — pips stay aligned across rows whether
-  // or not each is streaming. PR pip is NOT a grid column — it lives
-  // inline on line 2 (left of the subline text), anchored to the branch
-  // column's left edge so its X stays consistent across every section.
-  // Branch is `minmax(0,1fr)` so it stretches and truncates; sub-count
-  // and time are `auto`, so an empty sub-count column collapses to 0 and
-  // gives its width back to the branch. Each DockRow is a subgrid item
-  // that inherits these columns, keeping the icons aligned vertically
-  // across rows in one section.
+  // Section is the grid container. Four columns (the `DOCK_ROW_GRID`
+  // template): indicator · branch · sub-count · time. The leading
+  // indicator column is a fixed 18px reserved track (not `auto`) holding
+  // the merged `StatePip` — R-activity-merge collapsed the old leading
+  // pair (a 12px live-activity track + a separate state-pip track) into
+  // this one column, the live dot now folded into the pip's green ring —
+  // so the indicator never shifts as its axes flip and pips stay aligned
+  // across rows whether or not each is streaming. PR pip is NOT a grid
+  // column — it lives inline on line 2 (left of the subline text),
+  // anchored to the branch column's left edge so its X stays consistent
+  // across every section. Branch is `minmax(0,1fr)` so it stretches and
+  // truncates; sub-count and time are `auto`, so an empty sub-count
+  // column collapses to 0 and gives its width back to the branch. Each
+  // DockRow is a subgrid item that inherits these columns, keeping the
+  // icons aligned vertically across rows in one section.
   <section
     data-testid="dock-section"
     data-repo={props.group.name}
     style={{ "--repo-color": props.group.color }}
-    class={`dock-cards-section grid ${DOCK_ROW_GRID_DESKTOP} gap-x-2 pl-6 ${DOCK_CARDS_GUTTER_CLASS}`}
+    class={`dock-cards-section grid ${DOCK_ROW_GRID} gap-x-2 pl-3 ${DOCK_CARDS_GUTTER_CLASS}`}
   >
     {/* Header is a sticky band tinted with the repo colour (see
      *  `.dock-cards-section-header`), riding above the repo-colour
@@ -380,13 +385,14 @@ const RepoSection: Component<{
      *  `NIXOS-CONFIG` label reads as a coloured section break that
      *  stays pinned while its rows scroll, not a faint label that
      *  blends in and slides away. The name carries the repo colour
-     *  too; count stays neutral. Header text sits at `pl-3` (12 px)
-     *  from the dock's outer edge; row content sits at `pl-6`
-     *  (24 px) inside the section's grid, so the header reads as an
-     *  outdented parent and the rows nest visually beneath it. */}
+     *  too; count stays neutral. Header text and row content both sit
+     *  at `pl-3` (12 px) from the dock's outer edge, so the row's
+     *  leading status indicator aligns with the repo name — the repo
+     *  spine + tinted header band carry the grouping (R-activity-merge
+     *  reclaimed the old `pl-6` row indent). */}
     <div
       data-testid="dock-section-header"
-      class={`dock-cards-section-header col-span-full flex items-center gap-2 -ml-6 ${DOCK_CARDS_GUTTER_NEG_CLASS} pl-3 pr-3 py-1.5 border-y border-edge/30`}
+      class={`dock-cards-section-header col-span-full flex items-center gap-2 -ml-3 ${DOCK_CARDS_GUTTER_NEG_CLASS} pl-3 pr-3 py-1.5 border-y border-edge/30`}
     >
       <span
         data-testid="dock-section-name"
@@ -415,12 +421,14 @@ const RepoSection: Component<{
 
 /** A row in cards mode — two lines:
  *
- *    Line 1: `activity · agent · branch · sub-count · time`
+ *    Line 1: `indicator · branch · sub-count · time`
  *    Line 2: `[PR pip] subline`  (branch col → end)
  *
- *  The PR pip rides on line 2 at the leftmost X (anchored to the
- *  branch column's left edge, col 3) so PR icons align across every
- *  section. Sub-count cell
+ *  A single leading status indicator (`StatePip`) folds the old
+ *  activity/agent glyphs into one column; the branch column starts at
+ *  col 2 (`DOCK_ROW_BRANCH_COL = col-start-2`). The PR pip rides on
+ *  line 2 at the leftmost X (anchored to the branch column's left edge,
+ *  col 2) so PR icons align across every section. Sub-count cell
  *  is empty when the row has none, collapsing the column back into
  *  branch width. Active row gets a quiet highlight (`bg-accent/15` +
  *  3 px accent left stripe) but identical geometry, so the dock
@@ -447,6 +455,7 @@ const DockRow: Component<{
 }> = (props) => {
   const store = useTerminalStore();
   const tileStore = useTileStore();
+  const activity = useTerminalActivity();
   const combined = createDockRowData(props.id);
   // Active-tile highlight follows the TILE registry (so a focused sleeping tile
   // reads as the active row in PR 2); unread is terminal-attention, stays on
@@ -488,8 +497,22 @@ const DockRow: Component<{
           class={`relative w-full grid grid-cols-subgrid col-span-full items-center py-1.5 ${DOCK_CARDS_SUBGRID_LEFT_RESTORE} ${DOCK_CARDS_GUTTER_NEG_CLASS} ${DOCK_CARDS_GUTTER_CLASS} border-l-[length:var(--dock-edge-stripe-w)] border-l-transparent text-left cursor-pointer transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 hover:bg-surface-2/40 data-[active]:bg-accent/15 data-[active]:border-l-accent`}
           title="Jump to this terminal"
         >
-          <ActivityPip id={props.id} />
-          <StatePip variant={pipVariant(props.pip, unread())} />
+          {/* One merged status indicator — the agent-state CORE
+           *  (`pipVariant`), wrapped by the green live RING when the
+           *  terminal is moving bytes and the amber unread corner BADGE
+           *  when a fired alert is unopened. The old standalone ActivityPip
+           *  column is gone (its dot is now the ring), reclaiming the
+           *  dead left margin. `row-span-2 self-center` centres it across
+           *  both row lines rather than pinning it to line 1. */}
+          <span class="row-span-2 flex self-center">
+            <StatePip
+              variant={pipVariant(props.pip)}
+              live={activity.isLive(props.id)}
+              alert={unread()}
+              alertLabel="unread alert"
+              class={DOCK_ROW_PIP_BOX}
+            />
+          </span>
           <span
             class="font-medium text-[0.85rem] leading-tight truncate min-w-0"
             style={{
@@ -503,7 +526,7 @@ const DockRow: Component<{
           <SubCountCell subCount={c().info.subCount} />
           {/* Recency cell — "Xs ago". Shared with the touch drawer; the
            *  no-reflow width contract lives in RecencyCell. The live signal
-           *  rides the leading ActivityPip column, not here. */}
+           *  rides the leading StatePip's ring, not here. */}
           <RecencyCell
             lastActivityAt={c().meta.lastActivityAt}
             textSize="text-[0.6rem]"
