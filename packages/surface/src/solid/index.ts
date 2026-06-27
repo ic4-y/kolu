@@ -20,6 +20,11 @@ export {
   type Subscription,
   type SubscriptionOptions,
 } from "./createSubscription";
+// The grace-windowed boolean view — delays a predicate's rising edge, instant on
+// the fall. `@kolu/surface-app`'s `SurfaceAppProvider` derives its "show the
+// Disconnected overlay" signal from the transport's instantaneous `down` status
+// through this, so a sub-second forced reconnect never flashes the alarm.
+export { gracedDown } from "./gracedDown";
 export {
   createSurfaceHealthRegistry,
   type GateStatus,
@@ -45,6 +50,10 @@ export {
   type SurfaceConnectionStatus,
   type WatchableSocket,
 } from "./liveSignal";
+// The browser wake-event seam (window focus / tab visible → an immediate heartbeat
+// re-probe). Exported so `@kolu/surface-app`'s `createServerLifecycle` wires the
+// same fast resume path over its own watchdog; a no-op off-DOM.
+export { onWake } from "./onWake";
 // Re-exported so `@kolu/surface-app` (which has no direct `@orpc` dependency) can
 // constrain its own generics (`connectSurfaces<C extends AnyContractRouter>`) over
 // the combined contract without reaching into `@orpc/contract` itself.
