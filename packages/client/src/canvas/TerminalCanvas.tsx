@@ -177,11 +177,11 @@ const TerminalCanvas: Component<{
         const zoom = viewport.zoom();
         const cx = viewport.panX() + width / (2 * zoom);
         const cy = viewport.panY() + height / (2 * zoom);
-        
+
         // Check if there are any new tiles that need layouts
         const newIds = ids.filter((id) => !layoutOf(id));
         const inheritSize = newIds.length > 0 ? consumeInheritSize() : null;
-        
+
         const placed: {
           id: TileId;
           layout: TileLayout;

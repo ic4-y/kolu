@@ -24,8 +24,8 @@ const MAX_CASCADE_ITERATIONS = 50;
  *  dimensions for collision detection to be accurate.
  *
  *  Viewport-relative — only correct for one-shot placement at create time.
- *  A future continuous tiler must compute placement in a viewport-
- *  independent frame (canvas-origin or the existing tiles' bounding box); pan would
+ *  A future continuous tiler must compute placement in a viewport-independent
+ *  frame (canvas-origin or the existing tiles' bounding box); pan would
  *  otherwise re-place tiles every frame. */
 export function findFreeTilePosition(
   viewportCenterX: number,
