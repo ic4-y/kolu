@@ -154,9 +154,11 @@ export const useTerminalCrud = createSharedRoot(() => {
     // glitch-free read.
     if (!initial?.canvasLayout) {
       const { id: activeId, meta } = store.active();
+      // `active()` bundles (id, meta): meta is null whenever id is null, so the
+      // no-active-tile branch is just `undefined` — there's no metadata to read.
       const activeLayout = activeId
         ? pendingLayouts.resolveLayout(activeId, meta?.canvasLayout)
-        : meta?.canvasLayout;
+        : undefined;
       pendingLayouts.setNextDefaultSize(
         activeLayout ? { w: activeLayout.w, h: activeLayout.h } : null,
       );
